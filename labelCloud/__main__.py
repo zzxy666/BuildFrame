@@ -1,6 +1,8 @@
 import argparse
 import logging
-
+import atexit
+from pathlib import Path
+from labelCloud.control.config_manager import config
 from labelCloud import __version__
 
 
@@ -30,8 +32,6 @@ def setup_example_project() -> None:
     from pathlib import Path
 
     import pkg_resources
-
-    from labelCloud.control.config_manager import config
 
     logging.info(
         "Starting labelCloud in example mode.\n"
@@ -88,6 +88,8 @@ def start_gui():
     control = Controller()
     view = GUI(control)
 
+    atexit.register(cleanup_roof_obj_files)
+
     # Install event filter to catch user interventions
     app.installEventFilter(view)
 
@@ -103,6 +105,18 @@ def start_gui():
     logging.info("Showing GUI...")
     sys.exit(app.exec_())
 
+def cleanup_roof_obj_files():
+    """程序退出时删除所有 .roof.obj 文件"""
+    pcd_folder = Path(config.get("FILE", "pointcloud_folder"))
+    if not pcd_folder.exists():
+        return
+
+    for obj_file in pcd_folder.rglob("*.roof.obj"):
+        try:
+            obj_file.unlink()
+            print(f"[Cleanup] 已删除临时屋顶标注: {obj_file}")
+        except Exception as e:
+            print(f"[Cleanup] 删除 {obj_file} 失败: {e}")
 
 if __name__ == "__main__":
     main()

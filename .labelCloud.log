@@ -1,0 +1,20 @@
+2025-12-25 22:01:01,602 - INFO    : OpenGL_accelerate module loaded
+2025-12-25 22:01:01,606 - INFO    : Using accelerated ArrayDatatype
+2025-12-25 22:01:03,164 - INFO    : Loading next point cloud...
+2025-12-25 22:01:03,164 - INFO    : Reading LAS file: pointclouds/5080_54435.las
+2025-12-25 22:01:03,170 - INFO    : LAS文件检测到无效RGB（全黑），将使用高程伪彩显示
+2025-12-25 22:01:03,171 - INFO    : Centered point cloud at origin, original center = [323.74313  275.08014   43.131126]
+2025-12-25 22:01:03,171 - INFO    : ================================================================================= Loading 5080_54435.las ==================================================================================
+2025-12-25 22:01:03,399 - INFO    : Generated colors for colorless point cloud based on height.
+2025-12-25 22:01:03,400 - INFO    : Successfully loaded point cloud from pointclouds/5080_54435.las!
+2025-12-25 22:01:03,400 - INFO    : Number of Points:       127984         
+2025-12-25 22:01:03,400 - INFO    : Number of Colors:       127984         
+2025-12-25 22:01:03,400 - INFO    : Point Cloud Center:     [-0.  0.  0.]           
+2025-12-25 22:01:03,400 - INFO    : Point Cloud Minimums:   [-23.72 -25.06  -5.24]  
+2025-12-25 22:01:03,400 - INFO    : Point Cloud Maximums:   [26.28 24.94  9.78]     
+2025-12-25 22:01:03,400 - INFO    : Initial Translation:    [  0.    -0.   -72.29]  
+2025-12-25 22:01:03,400 - INFO    : ===========================================================================================================================================================================================
+2025-12-25 22:01:03,479 - INFO    : Intialized widget.
+2025-12-25 22:01:03,494 - INFO    : Resized widget.
+2025-12-25 22:01:03,507 - INFO    : Showing GUI...
+2025-12-25 22:01:04,925 - INFO    : Closing window after saving ...

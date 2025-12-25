@@ -5,18 +5,24 @@ import numpy.typing as npt
 
 import OpenGL.GL as GL
 from OpenGL import GLU
-
-from . import math3d
-from ..definitions import BBOX_SIDES, Color4f, Point3D
+from OpenGL.GLUT import glutBitmapCharacter, GLUT_BITMAP_HELVETICA_12
+# from . import math3d
+from ..definitions import Color4f, Point3D
 
 if TYPE_CHECKING:
-    from ..model import BBox, PointCloud
+    from ..model import PointCloud
 
 
 DEVICE_PIXEL_RATIO: Optional[float] = (
     None  # is set once and for every window resize (retina display fix)
 )
 
+def draw_text(position: Point3D, text: str, color: Color4f = (1.0, 1.0, 1.0, 1.0)):
+    """在3D空间指定位置绘制文字（白色，默认Helvetica 12）"""
+    GL.glColor4f(*color)
+    GL.glRasterPos3f(*position)
+    for char in text:
+        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, ord(char))
 
 def draw_points(
     points: Union[List[Point3D], npt.NDArray],
@@ -65,20 +71,20 @@ def draw_rectangles(
     GL.glEnd()
 
 
-def draw_cuboid(
-    vertices: Union[List[Point3D], npt.NDArray],
-    color: Color4f = (1, 1, 0, 0.5),
-    draw_vertices: bool = False,
-    vertex_color: Color4f = (0, 1, 1, 1),
-) -> None:
-    # flatten side vertices
-    side_vertices = [
-        index for side_indices in BBOX_SIDES.values() for index in side_indices
-    ]
-    rectangle_vertices = np.array(vertices)[side_vertices]
-    draw_rectangles(rectangle_vertices, color=color)
-    if draw_vertices:
-        draw_points(vertices, color=vertex_color)
+# def draw_cuboid(
+#     vertices: Union[List[Point3D], npt.NDArray],
+#     color: Color4f = (1, 1, 0, 0.5),
+#     draw_vertices: bool = False,
+#     vertex_color: Color4f = (0, 1, 1, 1),
+# ) -> None:
+#     # flatten side vertices
+#     side_vertices = [
+#         index for side_indices in BBOX_SIDES.values() for index in side_indices
+#     ]
+#     rectangle_vertices = np.array(vertices)[side_vertices]
+#     draw_rectangles(rectangle_vertices, color=color)
+#     if draw_vertices:
+#         draw_points(vertices, color=vertex_color)
 
 
 def draw_crosshair(
@@ -134,80 +140,80 @@ def get_pick_ray(x: float, y: float, modelview, projection) -> Tuple[Point3D, Po
     return p_front, p_back
 
 
-def get_intersected_bboxes(
-    x: float, y: float, bboxes: List["BBox"], modelview, projection
-) -> Union[int, None]:
-    """Checks if the picking ray intersects any bounding box from bboxes.
+# def get_intersected_bboxes(
+#     x: float, y: float, bboxes: List["BBox"], modelview, projection
+# ) -> Union[int, None]:
+#     """Checks if the picking ray intersects any bounding box from bboxes.
 
-    :param x: x screen coordinate
-    :param y: y screen coordinate
-    :param bboxes: list of bounding boxes
-    :param modelview: modelview matrix
-    :param projection: projection matrix
-    :return: Id of the intersected bounding box or None if no bounding box is intersected
-    """
-    intersected_bboxes = {}  # bbox_index: bbox
-    for index, bbox in enumerate(bboxes):
-        intersection_point, _ = get_intersected_sides(x, y, bbox, modelview, projection)
-        if intersection_point is not None:
-            intersected_bboxes[index] = intersection_point[2]
+#     :param x: x screen coordinate
+#     :param y: y screen coordinate
+#     :param bboxes: list of bounding boxes
+#     :param modelview: modelview matrix
+#     :param projection: projection matrix
+#     :return: Id of the intersected bounding box or None if no bounding box is intersected
+#     """
+#     intersected_bboxes = {}  # bbox_index: bbox
+#     for index, bbox in enumerate(bboxes):
+#         intersection_point, _ = get_intersected_sides(x, y, bbox, modelview, projection)
+#         if intersection_point is not None:
+#             intersected_bboxes[index] = intersection_point[2]
 
-    p0, p1 = get_pick_ray(x, y, modelview, projection)  # Calculate picking ray
-    if intersected_bboxes and (
-        p0[2] >= p1[2]
-    ):  # Calculate which intersected bbox is closer to screen
-        return max(intersected_bboxes, key=intersected_bboxes.get)  # type: ignore
-    elif intersected_bboxes:
-        return min(intersected_bboxes, key=intersected_bboxes.get)  # type: ignore
-    else:
-        return None
+#     p0, p1 = get_pick_ray(x, y, modelview, projection)  # Calculate picking ray
+#     if intersected_bboxes and (
+#         p0[2] >= p1[2]
+#     ):  # Calculate which intersected bbox is closer to screen
+#         return max(intersected_bboxes, key=intersected_bboxes.get)  # type: ignore
+#     elif intersected_bboxes:
+#         return min(intersected_bboxes, key=intersected_bboxes.get)  # type: ignore
+#     else:
+#         return None
 
 
-def get_intersected_sides(
-    x: float, y: float, bbox: "BBox", modelview, projection
-) -> Union[Tuple[List[int], str], Tuple[None, None]]:
-    """Checks if and with which side of the given bounding box the picking ray intersects.
+# def get_intersected_sides(
+#     x: float, y: float, bbox: "BBox", modelview, projection
+# ) -> Union[Tuple[List[int], str], Tuple[None, None]]:
+#     """Checks if and with which side of the given bounding box the picking ray intersects.
 
-    :param x: x screen coordinate
-    :param y: y screen coordinate:
-    :param bbox: bounding box to check for intersection
-    :param modelview: modelview matrix
-    :param projection: projection matrix
-    :return: intersection point, name of intersected side [top, bottom, right, back, left, front]
-    """
-    p0, p1 = get_pick_ray(x, y, modelview, projection)  # Calculate picking ray
-    vertices = bbox.get_vertices()
+#     :param x: x screen coordinate
+#     :param y: y screen coordinate:
+#     :param bbox: bounding box to check for intersection
+#     :param modelview: modelview matrix
+#     :param projection: projection matrix
+#     :return: intersection point, name of intersected side [top, bottom, right, back, left, front]
+#     """
+#     p0, p1 = get_pick_ray(x, y, modelview, projection)  # Calculate picking ray
+#     vertices = bbox.get_vertices()
 
-    intersections: List[Tuple[list, str]] = (
-        list()
-    )  # (intersection_point, bounding box side)
-    for side, indices in BBOX_SIDES.items():
-        # Calculate plane equation
-        pl1 = vertices[indices[0]]  # point in plane
-        v1 = np.subtract(vertices[indices[1]], pl1)
-        v2 = np.subtract(vertices[indices[3]], pl1)
-        n = np.cross(v1, v2)  # plane normal
+#     intersections: List[Tuple[list, str]] = (
+#         list()
+#     )  # (intersection_point, bounding box side)
+#     for side, indices in BBOX_SIDES.items():
+#         # Calculate plane equation
+#         pl1 = vertices[indices[0]]  # point in plane
+#         v1 = np.subtract(vertices[indices[1]], pl1)
+#         v2 = np.subtract(vertices[indices[3]], pl1)
+#         n = np.cross(v1, v2)  # plane normal
 
-        intersection = math3d.get_line_plane_intersection(p0, p1, pl1, tuple(n))  # type: ignore
+#         intersection = math3d.get_line_plane_intersection(p0, p1, pl1, tuple(n))  # type: ignore
 
-        # Check if intersection is inside rectangle
-        if intersection is not None:
-            v = np.subtract(intersection, pl1)
-            width = np.linalg.norm(v1)
-            height = np.linalg.norm(v2)
-            proj1 = np.dot(v, v1) / width
-            proj2 = np.dot(v, v2) / height
+#         # Check if intersection is inside rectangle
+#         if intersection is not None:
+#             v = np.subtract(intersection, pl1)
+#             width = np.linalg.norm(v1)
+#             height = np.linalg.norm(v2)
+#             proj1 = np.dot(v, v1) / width
+#             proj2 = np.dot(v, v2) / height
 
-            if (width > proj1 > 0) and (height > proj2 > 0):
-                intersections.append((intersection.tolist(), side))
+#             if (width > proj1 > 0) and (height > proj2 > 0):
+#                 intersections.append((intersection.tolist(), side))
 
-    # Calculate which intersected side is closer
-    intersections = sorted(
-        intersections, key=lambda element: element[0][2]
-    )  # sort by z-value
-    if intersections and (p0[2] >= p1[2]):
-        return intersections[-1]  # intersection point: list, side: str
-    elif intersections:
-        return intersections[0]
-    else:
-        return None, None
+#     # Calculate which intersected side is closer
+#     intersections = sorted(
+#         intersections, key=lambda element: element[0][2]
+#     )  # sort by z-value
+#     if intersections and (p0[2] >= p1[2]):
+#         return intersections[-1]  # intersection point: list, side: str
+#     elif intersections:
+#         return intersections[0]
+#     else:
+#         return None, None

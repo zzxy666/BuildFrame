@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1278</width>
-    <height>903</height>
+    <height>938</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -35,14 +35,14 @@
         <property name="maximumSize">
          <size>
           <width>230</width>
-          <height>115</height>
+          <height>230</height>
          </size>
         </property>
         <property name="text">
          <string/>
         </property>
         <property name="pixmap">
-         <pixmap>../icons/labelCloud_icon.png</pixmap>
+         <pixmap>../icons/BuildFrame.png</pixmap>
         </property>
         <property name="scaledContents">
          <bool>true</bool>
@@ -850,6 +850,19 @@
        </widget>
       </item>
       <item>
+       <widget class="QPushButton" name="connect_two_vertices">
+        <property name="text">
+         <string>Connect two vertices</string>
+        </property>
+        <property name="iconSize">
+         <size>
+          <width>20</width>
+          <height>20</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QPushButton" name="button_add_lines">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
@@ -1375,22 +1388,6 @@
     <addaction name="act_set_pcd_folder"/>
     <addaction name="act_set_label_folder"/>
    </widget>
-   <widget class="QMenu" name="menuLabels">
-    <property name="title">
-     <string>Labels</string>
-    </property>
-    <property name="toolTipsVisible">
-     <bool>true</bool>
-    </property>
-    <widget class="QMenu" name="act_set_default_class">
-     <property name="title">
-      <string>Set Default Object Class …</string>
-     </property>
-    </widget>
-    <addaction name="act_set_default_class"/>
-    <addaction name="act_delete_all_labels"/>
-    <addaction name="act_propagate_labels"/>
-   </widget>
    <widget class="QMenu" name="menuSettings">
     <property name="title">
      <string>Settings</string>
@@ -1398,14 +1395,10 @@
     <property name="toolTipsVisible">
      <bool>true</bool>
     </property>
-    <addaction name="act_z_rotation_only"/>
     <addaction name="act_show_floor"/>
-    <addaction name="act_show_orientation"/>
-    <addaction name="act_color_with_label"/>
     <addaction name="act_change_settings"/>
    </widget>
    <addaction name="menuFile"/>
-   <addaction name="menuLabels"/>
    <addaction name="menuSettings"/>
   </widget>
   <widget class="QStatusBar" name="status_bar"/>

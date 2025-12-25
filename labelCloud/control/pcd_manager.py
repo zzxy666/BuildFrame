@@ -12,13 +12,13 @@ import numpy as np
 import open3d as o3d
 import pkg_resources
 
-from ..definitions import LabelingMode, Point3D
-from ..io.labels.config import LabelConfig
+from ..definitions import Point3D
+#from ..io.labels.config import LabelConfig
 from ..io.pointclouds import BasePointCloudHandler, Open3DHandler
-from ..model import BBox, Perspective, PointCloud
+from ..model import Perspective, PointCloud
 from ..utils.logger import blue, green, print_column
 from .config_manager import config
-from .label_manager import LabelManager
+#from .label_manager import LabelManager
 
 if TYPE_CHECKING:
     from ..view.gui import GUI
@@ -29,7 +29,7 @@ class PointCloudManger(object):
     ORIGINALS_FOLDER = "original_pointclouds"
     TRANSLATION_FACTOR = config.getfloat("POINTCLOUD", "STD_TRANSLATION")
     ZOOM_FACTOR = config.getfloat("POINTCLOUD", "STD_ZOOM")
-    SEGMENTATION = LabelConfig().type == LabelingMode.SEMANTIC_SEGMENTATION
+    SEGMENTATION = False
 
     def __init__(self) -> None:
         # Point cloud management
@@ -38,7 +38,7 @@ class PointCloudManger(object):
         self.current_id = -1
 
         self.view: GUI
-        self.label_manager = LabelManager()
+        #self.label_manager = LabelManager()
 
         # Point cloud control
         self.pointcloud: Optional[PointCloud] = None
@@ -136,35 +136,35 @@ class PointCloudManger(object):
         else:
             raise Exception("No point cloud left for loading!")
 
-    def populate_class_dropdown(self) -> None:
-        # Add point label list
-        self.view.current_class_dropdown.clear()
-        assert self.pointcloud is not None
+    # def populate_class_dropdown(self) -> None:
+    #     # Add point label list
+    #     self.view.current_class_dropdown.clear()
+    #     assert self.pointcloud is not None
 
-        for label_class in LabelConfig().classes:
-            self.view.current_class_dropdown.addItem(label_class.name)
+    #     for label_class in LabelConfig().classes:
+    #         self.view.current_class_dropdown.addItem(label_class.name)
 
-    def get_labels_from_file(self) -> List[BBox]:
-        bboxes = self.label_manager.import_labels(self.pcd_path)
-        logging.info(green("Loaded %s bboxes!" % len(bboxes)))
-        return bboxes
+    # def get_labels_from_file(self) -> List[BBox]:
+    #     bboxes = self.label_manager.import_labels(self.pcd_path)
+    #     logging.info(green("Loaded %s bboxes!" % len(bboxes)))
+    #     return bboxes
 
     # SETTER
     def set_view(self, view: "GUI") -> None:
         self.view = view
         self.view.gl_widget.set_pointcloud_controller(self)
-        self.view.update_default_object_class_menu(
-            set(LabelConfig().get_classes().keys())
-        )  # TODO: Move to better location
+        # self.view.update_default_object_class_menu(
+        #     set(LabelConfig().get_classes().keys())
+        # )  # TODO: Move to better location
 
-    def save_labels_into_file(self, bboxes: List[BBox]) -> None:
-        if self.pcds:
-            self.label_manager.export_labels(self.pcd_path, bboxes)
-            self.collected_object_classes.update(
-                {bbox.get_classname() for bbox in bboxes}
-            )
-        else:
-            logging.warning("No point clouds to save labels for!")
+    # def save_labels_into_file(self, bboxes: List[BBox]) -> None:
+    #     if self.pcds:
+    #         self.label_manager.export_labels(self.pcd_path, bboxes)
+    #         self.collected_object_classes.update(
+    #             {bbox.get_classname() for bbox in bboxes}
+    #         )
+    #     else:
+    #         logging.warning("No point clouds to save labels for!")
 
     def save_current_perspective(self) -> None:
         if config.getboolean("USER_INTERFACE", "KEEP_PERSPECTIVE") and self.pointcloud:
@@ -186,15 +186,27 @@ class PointCloudManger(object):
 
     def translate_along_x(self, distance) -> None:
         assert self.pointcloud is not None
-        self.pointcloud.set_trans_x(
-            self.pointcloud.trans_x - distance * PointCloudManger.TRANSLATION_FACTOR
-        )
+        # self.pointcloud.set_trans_x(
+        #     self.pointcloud.trans_x - distance * PointCloudManger.TRANSLATION_FACTOR
+        # )
+        extents = np.linalg.norm(self.pointcloud.pcd_maxs - self.pointcloud.pcd_mins)
+        base_factor = 0.0015  # 经验值，和原版0.001接近，对中等点云感觉一致
+        adaptive_factor = extents * base_factor  # 点云越大，平移步长越大
+        
+        trans_distance = distance * adaptive_factor
+        self.pointcloud.set_trans_x(self.pointcloud.trans_x - trans_distance)
 
     def translate_along_y(self, distance) -> None:
         assert self.pointcloud is not None
-        self.pointcloud.set_trans_y(
-            self.pointcloud.trans_y + distance * PointCloudManger.TRANSLATION_FACTOR
-        )
+        # self.pointcloud.set_trans_y(
+        #     self.pointcloud.trans_y + distance * PointCloudManger.TRANSLATION_FACTOR
+        # )
+        extents = np.linalg.norm(self.pointcloud.pcd_maxs - self.pointcloud.pcd_mins)
+        base_factor = 0.0015
+        adaptive_factor = extents * base_factor
+        
+        trans_distance = distance * adaptive_factor
+        self.pointcloud.set_trans_y(self.pointcloud.trans_y + trans_distance)
 
     def translate_along_z(self, distance) -> None:
         assert self.pointcloud is not None
@@ -204,7 +216,14 @@ class PointCloudManger(object):
 
     def zoom_into(self, distance) -> None:
         assert self.pointcloud is not None
-        zoom_distance = distance * PointCloudManger.ZOOM_FACTOR
+        #zoom_distance = distance * PointCloudManger.ZOOM_FACTOR
+
+        # 计算点云当前范围（对角线长度），作为基准
+        extents = np.linalg.norm(self.pointcloud.pcd_maxs - self.pointcloud.pcd_mins)
+        # 基础步长：让缩放速度与点云大小成正比
+        base_factor = 0.001
+        zoom_distance = distance * extents * base_factor # extents越大，步长越大；小点云步长自动变小
+
         self.pointcloud.set_trans_z(self.pointcloud.trans_z + zoom_distance)
 
     def reset_translation(self) -> None:
@@ -261,21 +280,21 @@ class PointCloudManger(object):
         )
         self.pointcloud.to_file()
 
-    def assign_point_label_in_box(self, box: BBox) -> None:
-        assert self.pointcloud is not None
-        points = self.pointcloud.points
-        points_inside = box.is_inside(points)
+    # def assign_point_label_in_box(self, box: BBox) -> None:
+    #     assert self.pointcloud is not None
+    #     points = self.pointcloud.points
+    #     points_inside = box.is_inside(points)
 
-        # Relabel the points if its inside the box
-        if self.pointcloud.has_label:
-            assert self.pointcloud.labels is not None
-            self.pointcloud.labels[points_inside] = (
-                LabelConfig().get_class(box.classname).id
-            )
-            self.pointcloud.update_selected_points_in_label_vbo(points_inside)
-            logging.info(
-                f"Labeled {np.sum(points_inside)} points inside the current bounding box with label `{box.classname}`"
-            )
+    #     # Relabel the points if its inside the box
+    #     if self.pointcloud.has_label:
+    #         assert self.pointcloud.labels is not None
+    #         self.pointcloud.labels[points_inside] = (
+    #             LabelConfig().get_class(box.classname).id
+    #         )
+    #         self.pointcloud.update_selected_points_in_label_vbo(points_inside)
+    #         logging.info(
+    #             f"Labeled {np.sum(points_inside)} points inside the current bounding box with label `{box.classname}`"
+    #         )
 
     # HELPER
 

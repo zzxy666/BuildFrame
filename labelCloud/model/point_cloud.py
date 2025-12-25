@@ -8,12 +8,12 @@ import numpy.typing as npt
 import OpenGL.GL as GL
 from PyQt5.QtWidgets import QMessageBox
 
-from labelCloud.io.labels.config import LabelConfig
+#from labelCloud.io.labels.config import LabelConfig
 
 from ..control.config_manager import config
-from ..definitions import LabelingMode, Point3D, Rotations3D, Translation3D
+from ..definitions import Point3D, Rotations3D, Translation3D
 from ..io.pointclouds import BasePointCloudHandler
-from ..io.segmentations import BaseSegmentationHandler
+#from ..io.segmentations import BaseSegmentationHandler
 from ..utils.color import colorize_points_with_height
 from ..utils.logger import end_section, green, print_column, red, start_section, yellow
 from . import Perspective
@@ -60,10 +60,10 @@ class PointCloud(object):
         self.colors = colors if type(colors) == np.ndarray and len(colors) > 0 else None
 
         self.labels = None
-        if LabelConfig().type == LabelingMode.SEMANTIC_SEGMENTATION:
-            self.labels = segmentation_labels
-            self.validate_segmentation_label()
-            self.mix_ratio = config.getfloat("POINTCLOUD", "label_color_mix_ratio")
+        # if LabelConfig().type == LabelingMode.SEMANTIC_SEGMENTATION:
+        #     self.labels = segmentation_labels
+        #     self.validate_segmentation_label()
+        #     self.mix_ratio = config.getfloat("POINTCLOUD", "label_color_mix_ratio")
 
         self.vbo = None
         self.center: Point3D = tuple(np.sum(points[:, i]) / len(points) for i in range(3))  # type: ignore
@@ -77,6 +77,7 @@ class PointCloud(object):
         # Point cloud transformations
         self.trans_x, self.trans_y, self.trans_z = self.init_translation
         self.rot_x, self.rot_y, self.rot_z = self.init_rotation
+
 
         if self.colorless:
             # if no color in point cloud, either color with height or color with a single color
@@ -130,23 +131,24 @@ class PointCloud(object):
         """blend the points with label color map"""
         self.colors = cast(npt.NDArray[np.float32], self.colors)
         if self.labels is not None:
-            colors = LabelConfig().color_map[LabelConfig().class_order[self.labels]]
-            return colors * self.mix_ratio + self.colors * (1 - self.mix_ratio)
+            pass
+            #colors = LabelConfig().color_map[LabelConfig().class_order[self.labels]]
+            #return colors * self.mix_ratio + self.colors * (1 - self.mix_ratio)
         else:
             return self.colors
 
-    def save_segmentation_labels(self, extension=".bin") -> None:
-        label_path = (
-            config.getpath("FILE", "segmentation_folder")
-            / f"{self.path.stem}{extension}"
-        )
-        seg_handler: BaseSegmentationHandler = BaseSegmentationHandler.get_handler(
-            label_path.suffix
-        )()
-        assert self.labels is not None
-        self.validate_segmentation_label()
-        seg_handler.overwrite_labels(label_path=label_path, labels=self.labels)
-        logging.info(f"Writing segmentation labels to {label_path}")
+    # def save_segmentation_labels(self, extension=".bin") -> None:
+    #     label_path = (
+    #         config.getpath("FILE", "segmentation_folder")
+    #         / f"{self.path.stem}{extension}"
+    #     )
+    #     seg_handler: BaseSegmentationHandler = BaseSegmentationHandler.get_handler(
+    #         label_path.suffix
+    #     )()
+    #     assert self.labels is not None
+    #     self.validate_segmentation_label()
+    #     seg_handler.overwrite_labels(label_path=label_path, labels=self.labels)
+    #     logging.info(f"Writing segmentation labels to {label_path}")
 
     @classmethod
     def from_file(
@@ -163,17 +165,41 @@ class PointCloud(object):
         points, colors = BasePointCloudHandler.get_handler(
             path.suffix
         ).read_point_cloud(path=path)
+        
+        if points is not None and len(points) > 0:
+            import numpy as np
+
+            # 计算中心点
+            center = points.mean(axis=0)
+            scale = 0
+            # 平移点云
+            points -= center
+
+            # 可选：归一化到 [-1,1] 或 [-100,100] 范围（避免裁剪）
+            bbox_size = np.linalg.norm(points.max(axis=0) - points.min(axis=0))
+            if bbox_size > 1e4:  # 如果范围太大，自动缩放
+                scale = bbox_size / 100.0
+                points /= scale
+                logging.info(f"Auto-scaled point cloud by factor 1/{scale:.2f}")
+            
+
+            logging.info(f"Centered point cloud at origin, original center = {center}")
+            # 保存中心，用于导出时加回
+            cls.last_center = center
+            cls.last_scale = bbox_size / 100.0
+
+
 
         labels = None
-        if LabelConfig().type == LabelingMode.SEMANTIC_SEGMENTATION:
-            label_path = (
-                config.getpath("FILE", "segmentation_folder") / f"{path.stem}.bin"
-            )
-            logging.info(f"Loading segmentation labels from {label_path}.")
-            seg_handler = BaseSegmentationHandler.get_handler(label_path.suffix)()
-            labels = seg_handler.read_or_create_labels(
-                label_path=label_path, num_points=points.shape[0]
-            )
+        # if LabelConfig().type == LabelingMode.SEMANTIC_SEGMENTATION:
+        #     label_path = (
+        #         config.getpath("FILE", "segmentation_folder") / f"{path.stem}.bin"
+        #     )
+        #     logging.info(f"Loading segmentation labels from {label_path}.")
+        #     seg_handler = BaseSegmentationHandler.get_handler(label_path.suffix)()
+        #     labels = seg_handler.read_or_create_labels(
+        #         label_path=label_path, num_points=points.shape[0]
+        #     )
 
         return cls(
             path,
@@ -185,34 +211,34 @@ class PointCloud(object):
             write_buffer,
         )
 
-    def validate_segmentation_label(self) -> None:
-        unique_label_ids = set(np.unique(self.labels))  # type: ignore
-        unique_class_ids = set(c.id for c in LabelConfig().classes)
-        if not unique_class_ids.issuperset(unique_label_ids):
-            msg = QMessageBox()
-            msg.setWindowTitle("Invalid segmentation label")
-            msg.setText(
-                f"Segmentation labels {unique_label_ids} of `{self.path}` don't match with the label config {unique_class_ids}."
-            )
-            labels_to_replace = unique_label_ids.difference(unique_class_ids)
-            msg.setInformativeText(
-                f"""
-                Do you want to overwrite 
-                the undefined labels {labels_to_replace} with 
-                default label `{LabelConfig().get_default_class_name()}` of id `{LabelConfig().default}`?
-                """
-            )
-            msg.setIcon(QMessageBox.Critical)
-            msg.setStandardButtons(QMessageBox.Cancel | QMessageBox.Ok)
+    # def validate_segmentation_label(self) -> None:
+    #     unique_label_ids = set(np.unique(self.labels))  # type: ignore
+    #     unique_class_ids = set(c.id for c in LabelConfig().classes)
+    #     if not unique_class_ids.issuperset(unique_label_ids):
+    #         msg = QMessageBox()
+    #         msg.setWindowTitle("Invalid segmentation label")
+    #         msg.setText(
+    #             f"Segmentation labels {unique_label_ids} of `{self.path}` don't match with the label config {unique_class_ids}."
+    #         )
+    #         labels_to_replace = unique_label_ids.difference(unique_class_ids)
+    #         msg.setInformativeText(
+    #             f"""
+    #             Do you want to overwrite 
+    #             the undefined labels {labels_to_replace} with 
+    #             default label `{LabelConfig().get_default_class_name()}` of id `{LabelConfig().default}`?
+    #             """
+    #         )
+    #         msg.setIcon(QMessageBox.Critical)
+    #         msg.setStandardButtons(QMessageBox.Cancel | QMessageBox.Ok)
 
-            msg.accepted.connect(self.replace_missing_labels_with_default)
-            msg.exec_()
+    #         msg.accepted.connect(self.replace_missing_labels_with_default)
+    #         msg.exec_()
 
-    def replace_missing_labels_with_default(self):
-        unique_label_ids = set(np.unique(self.labels))
-        unique_class_ids = set(c.id for c in LabelConfig().classes)
-        labels_to_replace = list(unique_label_ids.difference(unique_class_ids))
-        self.labels[np.isin(self.labels, labels_to_replace)] = LabelConfig().default
+    # def replace_missing_labels_with_default(self):
+    #     unique_label_ids = set(np.unique(self.labels))
+    #     unique_class_ids = set(c.id for c in LabelConfig().classes)
+    #     labels_to_replace = list(unique_label_ids.difference(unique_class_ids))
+    #     self.labels[np.isin(self.labels, labels_to_replace)] = LabelConfig().default
 
     def to_file(self, path: Optional[Path] = None) -> None:
         if not path:
