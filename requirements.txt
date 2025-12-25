@@ -1,15 +1,16 @@
-numpy>=1.21.6,<2.0.0  # Avoids binary incompatibility error.
-open3d>=0.15.2
-PyOpenGL==3.1.6  # Prevents 'NoneType' object has no attribute 'glGetError'.
-PyOpenGL-accelerate~=3.1.5
-PyQt5~=5.15.7
+# Core dependencies
+numpy>=1.21.6,<2.0.0  # 保持 <2.0.0，避免 OpenGL/binary 不兼容问题
+open3d>=0.18.0        # 更新到较新稳定版，支持更多点云格式和功能
+PyOpenGL==3.1.7       # 3.1.6 有时有 glGetError bug，3.1.7 更稳定（如果你用3.1.6没问题可保持）
+PyOpenGL-accelerate>=3.1.7
+PyQt5==5.15.10         # 5.15 系列最稳定的最后一个版本，避免 Qt6 迁移问题
 
-# Testing
-pytest~=7.3.1
-pytest-qt~=4.2.0
+# Point cloud IO
+laspy>=2.5.0          # 支持 LAS/LAZ 文件读取（你项目中已使用）
+scipy>=1.10.0         # RoofDrawingManager 中用了 cKDTree 做最近点查找
 
-# Development
-black>=23.1.0
-mypy~=1.3.0
-PyQt5-stubs~=5.15.6
-types-setuptools~=71.1.0
+# Configuration and utils
+configparser>=5.3.0   # 用于 config.ini 读取
+
+
+# Note: 不需要额外安装 GLUT，系统级 freeglut3 已解决文字绘制问题
