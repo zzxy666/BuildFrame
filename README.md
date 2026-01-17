@@ -1,7 +1,9 @@
 # BuildFrame - 城市点云结构化标注工具
 
-本项目基于 [labelCloud](https://github.com/ch-sa/labelCloud) 进行二次开发。
+本项目是基于 [labelCloud](https://github.com/ch-sa/labelCloud) 进行的二次开发。
+
 原项目作者：Christoph Sager  
+
 原项目许可证：GNU General Public License v3 or later (GPLv3+)
 
 本项目的开发者信息：Zhikang Yin、Shaobo Xia
