@@ -18,6 +18,9 @@
 - 增加标准视图快捷键
 - 增加地面滤波等功能
 
+## 演示
+<img width="1501" height="911" alt="截图 2026-01-18 22-20-13" src="https://github.com/user-attachments/assets/6ad18edc-f50e-4ae2-8b77-f2d21dc1a846" />
+
 ## 安装与运行
 ```bash
 git clone https://github.com/zzxy666/BuildFrame.git
