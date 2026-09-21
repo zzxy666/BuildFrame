@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
 import numpy as np
 import open3d as o3d
-import pkg_resources
 
 from ..definitions import Point3D
 #from ..io.labels.config import LabelConfig
@@ -18,6 +17,7 @@ from ..io.pointclouds import BasePointCloudHandler, Open3DHandler
 from ..model import Perspective, PointCloud
 from ..utils.logger import blue, green, print_column
 from .config_manager import config
+from ..view.i18n import tr
 #from .label_manager import LabelManager
 
 if TYPE_CHECKING:
@@ -61,7 +61,13 @@ class PointCloudManger(object):
         if self.pcd_folder.is_dir():
             self.pcds = []
             for file in sorted(self.pcd_folder.rglob("*")):
-                if file.suffix in PointCloudManger.PCD_EXTENSIONS:
+                if file.is_file() and file.suffix.lower() in PointCloudManger.PCD_EXTENSIONS:
+                    # 有对应原文件时，GT 是标注输出，不再作为新的待标注建筑。
+                    if file.stem.endswith("_gt") and any(
+                        file.with_name(file.stem[:-3] + ext).exists()
+                        for ext in (".las", ".laz", ".LAS", ".LAZ")
+                    ):
+                        continue
                     self.pcds.append(file)
         else:
             logging.warning(
@@ -70,7 +76,8 @@ class PointCloudManger(object):
 
         if self.pcds:
             self.view.status_manager.set_message(
-                f"Found {len(self.pcds)} point clouds in the point cloud folder."
+                "已在点云文件夹中找到 {count} 个点云文件。",
+                count=len(self.pcds),
             )
             self.update_pcd_infos()
         else:
@@ -78,16 +85,10 @@ class PointCloudManger(object):
                 self.pcd_folder, PointCloudManger.PCD_EXTENSIONS
             )
             self.view.status_manager.set_message(
-                "Please set the point cloud folder to a location that contains point cloud files."
+                "请将点云文件夹设置为包含有效点云文件的目录。"
             )
-            self.pointcloud = PointCloud.from_file(
-                Path(
-                    pkg_resources.resource_filename(
-                        "labelCloud.resources", "labelCloud_icon.pcd"
-                    )
-                )
-            )
-            self.update_pcd_infos(pointcloud_label=" – (select folder!)")
+            self.pointcloud = None
+            self.update_pcd_infos(pointcloud_label=tr(" —（请选择文件夹）"))
 
         self.view.init_progress(min_value=0, max_value=len(self.pcds) - 1)
         self.current_id = -1
@@ -96,16 +97,22 @@ class PointCloudManger(object):
     def pcds_left(self) -> bool:
         return self.current_id + 1 < len(self.pcds)
 
+    def _load_scene(self, path):
+        from .scene_worker import run_scene_task
+        return run_scene_task(self.view, "Loading point cloud...", lambda: PointCloud.from_file(
+            path, self.saved_perspective, write_buffer=False))
+
     def get_next_pcd(self) -> None:
         logging.info("Loading next point cloud...")
         if self.pcds_left():
             self.current_id += 1
             self.save_current_perspective()
-            self.pointcloud = PointCloud.from_file(
-                self.pcd_path,
-                self.saved_perspective,
-                write_buffer=self.pointcloud is not None,
-            )
+            previous = self.pointcloud
+            pointcloud = self._load_scene(self.pcd_path)
+            if previous is not None:
+                self.view.gl_widget.makeCurrent()
+                previous.release_buffers()
+            self.pointcloud = pointcloud
             self.update_pcd_infos()
         else:
             logging.warning("No point clouds left!")
@@ -115,11 +122,12 @@ class PointCloudManger(object):
         if pcd_index < len(self.pcds):
             self.current_id = pcd_index
             self.save_current_perspective()
-            self.pointcloud = PointCloud.from_file(
-                self.pcd_path,
-                self.saved_perspective,
-                write_buffer=self.pointcloud is not None,
-            )
+            previous = self.pointcloud
+            pointcloud = self._load_scene(self.pcd_path)
+            if previous is not None:
+                self.view.gl_widget.makeCurrent()
+                previous.release_buffers()
+            self.pointcloud = pointcloud
             self.update_pcd_infos()
         else:
             logging.warning("This point cloud does not exists!")
@@ -129,9 +137,12 @@ class PointCloudManger(object):
         if self.current_id > 0:
             self.current_id -= 1
             self.save_current_perspective()
-            self.pointcloud = PointCloud.from_file(
-                self.pcd_path, self.saved_perspective
-            )
+            previous = self.pointcloud
+            pointcloud = self._load_scene(self.pcd_path)
+            if previous is not None:
+                self.view.gl_widget.makeCurrent()
+                previous.release_buffers()
+            self.pointcloud = pointcloud
             self.update_pcd_infos()
         else:
             raise Exception("No point cloud left for loading!")
@@ -216,15 +227,7 @@ class PointCloudManger(object):
 
     def zoom_into(self, distance) -> None:
         assert self.pointcloud is not None
-        #zoom_distance = distance * PointCloudManger.ZOOM_FACTOR
-
-        # 计算点云当前范围（对角线长度），作为基准
-        extents = np.linalg.norm(self.pointcloud.pcd_maxs - self.pointcloud.pcd_mins)
-        # 基础步长：让缩放速度与点云大小成正比
-        base_factor = 0.001
-        zoom_distance = distance * extents * base_factor # extents越大，步长越大；小点云步长自动变小
-
-        self.pointcloud.set_trans_z(self.pointcloud.trans_z + zoom_distance)
+        self.pointcloud.dolly(distance)
 
     def reset_translation(self) -> None:
         assert self.pointcloud is not None
@@ -277,6 +280,8 @@ class PointCloudManger(object):
             points,
             colors,
             self.pointcloud.labels,
+            original_center=self.pointcloud.original_center,
+            applied_scale=self.pointcloud.applied_scale,
         )
         self.pointcloud.to_file()
 

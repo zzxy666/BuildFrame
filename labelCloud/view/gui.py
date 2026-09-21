@@ -3,10 +3,10 @@ import os
 import re
 import sys
 import traceback
+from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Set
 
-import pkg_resources
 from PyQt5 import QtCore, QtGui, QtWidgets, uic
 from PyQt5.QtCore import QEvent
 from PyQt5.QtGui import QPixmap
@@ -26,6 +26,7 @@ from ..control.config_manager import config , config_manager
 from ..io.pointclouds import BasePointCloudHandler
 #from ..labeling_strategies import PickingStrategy, SpanningStrategy
 from ..model.point_cloud import PointCloud
+from .i18n import LANGUAGE_ENGLISH, language_manager, tr
 from .settings_dialog import SettingsDialog  # type: ignore
 #from .startup.dialog import StartupDialog
 from .status_manager import StatusManager
@@ -113,18 +114,22 @@ STYLESHEET = """
     }}
 """
 
+_MAIN_WINDOW_UI, _ = uic.loadUiType(
+    str(
+        resources.files("labelCloud.resources.interfaces").joinpath(
+            "interface_roof.ui"
+        )
+    )
+)
 
-class GUI(QtWidgets.QMainWindow):
+
+class GUI(QtWidgets.QMainWindow, _MAIN_WINDOW_UI):
     def __init__(self, control: "Controller") -> None:
         super(GUI, self).__init__()
-        uic.loadUi(
-            pkg_resources.resource_filename(
-                "labelCloud.resources.interfaces", "interface_roof.ui"
-            ),
-            self,
-        )
+        self.setupUi(self)
+        self._current_pcd_name = None
         self.resize(1500, 900)
-        self.setWindowTitle("BuildFrame")
+        self.setWindowTitle(tr("BuildFrame 点云标注"))
         self.setStyleSheet(
             STYLESHEET.format(
                 icons_dir=str(
@@ -243,6 +248,8 @@ class GUI(QtWidgets.QMainWindow):
         #     ]
         # )
         self.label_list.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
+        self._setup_coordinate_panel()
+        self._setup_language_sensitive_fonts()
 
         # BOUNDING BOX PARAMETER EDITS
         """self.edit_pos_x: QtWidgets.QLineEdit
@@ -299,6 +306,209 @@ class GUI(QtWidgets.QMainWindow):
         self.timer.setInterval(20)  # period, in milliseconds
         self.timer.timeout.connect(self.controller.loop_gui)
         self.timer.start()
+
+    def _setup_coordinate_panel(self) -> None:
+        """Turn the compact coordinate boxes into readable property grids."""
+        self.coordinate_precision = max(
+            0,
+            min(
+                12,
+                config.getint(
+                    "USER_INTERFACE", "coordinate_precision", fallback=3
+                ),
+            ),
+        )
+
+        coordinate_font = QtGui.QFontDatabase.systemFont(
+            QtGui.QFontDatabase.FixedFont
+        )
+        coordinate_font.setPointSize(9)
+
+        coordinate_edits = (
+            self.start_pt_x,
+            self.start_pt_y,
+            self.start_pt_z,
+            self.end_pt_x,
+            self.end_pt_y,
+            self.end_pt_z,
+            self.current_pt_x,
+            self.current_pt_y,
+            self.current_pt_z,
+        )
+        for edit in coordinate_edits:
+            edit.setReadOnly(True)
+            edit.setFrame(True)
+            edit.setFont(coordinate_font)
+            edit.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            edit.setMinimumHeight(24)
+            edit.setToolTip(tr("选择坐标后按 Ctrl+C 可复制"))
+            edit.setStyleSheet(
+                "QLineEdit { background: #f7f7f7; padding: 1px 4px; "
+                "border: 1px solid #c8c8c8; border-radius: 2px; }"
+                "QLineEdit:focus { border: 1px solid #3478d4; "
+                "background: white; }"
+            )
+
+        # A narrow side panel is easier to scan as an X/Y/Z property grid than
+        # as six short fields laid out in a single row.
+        self.label.hide()
+        self.label_2.hide()
+        line_layout = QtWidgets.QGridLayout(self.groupBox)
+        line_layout.setContentsMargins(8, 20, 8, 8)
+        line_layout.setHorizontalSpacing(6)
+        line_layout.setVerticalSpacing(4)
+        self._line_coordinate_labels = []
+        for row, (label_text, edit) in enumerate(
+            (
+                ("起点 X", self.start_pt_x),
+                ("起点 Y", self.start_pt_y),
+                ("起点 Z", self.start_pt_z),
+                ("终点 X", self.end_pt_x),
+                ("终点 Y", self.end_pt_y),
+                ("终点 Z", self.end_pt_z),
+            )
+        ):
+            label = QLabel(tr(label_text))
+            self._line_coordinate_labels.append((label, label_text))
+            line_layout.addWidget(label, row, 0)
+            line_layout.addWidget(edit, row, 1)
+        line_layout.setColumnStretch(1, 1)
+        self.groupBox.setMinimumHeight(212)
+
+        self.label_3.hide()
+        point_layout = QtWidgets.QGridLayout(self.current_pt)
+        point_layout.setContentsMargins(8, 20, 8, 8)
+        point_layout.setHorizontalSpacing(6)
+        point_layout.setVerticalSpacing(4)
+        self._point_coordinate_labels = []
+        for row, (axis, edit) in enumerate(
+            (
+                ("X", self.current_pt_x),
+                ("Y", self.current_pt_y),
+                ("Z", self.current_pt_z),
+            )
+        ):
+            label = QLabel(axis)
+            self._point_coordinate_labels.append(label)
+            point_layout.addWidget(label, row, 0, alignment=QtCore.Qt.AlignCenter)
+            point_layout.addWidget(edit, row, 1)
+        point_layout.setColumnStretch(1, 1)
+        self.current_pt.setMinimumHeight(108)
+
+        # Let the list yield vertical space on smaller displays instead of
+        # forcing the coordinate fields outside the window.
+        self.label_list.setMinimumHeight(140)
+        self.label_list.setSizePolicy(
+            QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Expanding
+        )
+        self._retranslate_coordinate_panel()
+
+    def _retranslate_coordinate_panel(self) -> None:
+        self.groupBox.setTitle(tr("选中线坐标"))
+        self.current_pt.setTitle(tr("选中点坐标"))
+        for label, source_text in self._line_coordinate_labels:
+            label.setText(tr(source_text))
+        for edit in (
+            self.start_pt_x,
+            self.start_pt_y,
+            self.start_pt_z,
+            self.end_pt_x,
+            self.end_pt_y,
+            self.end_pt_z,
+            self.current_pt_x,
+            self.current_pt_y,
+            self.current_pt_z,
+        ):
+            coordinate_value = edit.property("coordinate_value")
+            coordinate_axis = edit.property("coordinate_axis")
+            if coordinate_value is not None and coordinate_axis:
+                edit.setToolTip(
+                    tr(
+                        "{axis} = {value:.12f}\n点击字段后按 Ctrl+A、Ctrl+C 可复制完整显示值",
+                        axis=tr(coordinate_axis),
+                        value=float(coordinate_value),
+                    )
+                )
+            else:
+                edit.setToolTip(tr("选择坐标后按 Ctrl+C 可复制"))
+
+    def _setup_language_sensitive_fonts(self) -> None:
+        self._compact_english_buttons = (
+            self.button_view_top,
+            self.button_view_bottom,
+            self.button_view_front,
+            self.button_view_back,
+            self.button_view_left,
+            self.button_view_right,
+        )
+        for button in self._compact_english_buttons:
+            button.setProperty("base_font", button.font())
+        self._apply_language_sensitive_fonts()
+
+    def _apply_language_sensitive_fonts(self) -> None:
+        if not hasattr(self, "_compact_english_buttons"):
+            return
+        for button in self._compact_english_buttons:
+            font = QtGui.QFont(button.property("base_font"))
+            if language_manager.language == LANGUAGE_ENGLISH:
+                font.setPointSize(min(font.pointSize(), 9))
+            button.setFont(font)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() != QtCore.QEvent.LanguageChange or not hasattr(
+            self, "groupBox"
+        ):
+            return
+        self.retranslateUi(self)
+        if hasattr(self, "act_ground_filter_settings"):
+            self.act_ground_filter_settings.setText(tr("地面滤波设置…"))
+        if hasattr(self, "_line_coordinate_labels"):
+            self._retranslate_coordinate_panel()
+        self._apply_language_sensitive_fonts()
+        if hasattr(self, "status_manager"):
+            self.status_manager.retranslate()
+        if self._current_pcd_name is not None:
+            self.set_pcd_label(self._current_pcd_name)
+        if hasattr(self, "controller"):
+            self.controller.filter_controller.retranslate()
+
+    def _set_coordinate_value(
+        self, edit: QtWidgets.QLineEdit, axis: str, value: float
+    ) -> None:
+        numeric_value = float(value)
+        edit.setText(f"{numeric_value:.{self.coordinate_precision}f}")
+        edit.setCursorPosition(0)
+        edit.setProperty("coordinate_axis", axis)
+        edit.setProperty("coordinate_value", numeric_value)
+        edit.setToolTip(
+            tr(
+                "{axis} = {value:.12f}\n点击字段后按 Ctrl+A、Ctrl+C 可复制完整显示值",
+                axis=tr(axis),
+                value=numeric_value,
+            )
+        )
+
+    def show_vertex_coordinates(self, point) -> None:
+        """Display a selected world-space vertex in the coordinate panel."""
+        for axis, edit, value in zip(
+            "XYZ",
+            (self.current_pt_x, self.current_pt_y, self.current_pt_z),
+            point,
+        ):
+            self._set_coordinate_value(edit, axis, value)
+
+    def show_line_coordinates(self, start, end) -> None:
+        """Display both endpoints of a selected world-space line."""
+        for axis, start_edit, end_edit, start_value, end_value in zip(
+            "XYZ",
+            (self.start_pt_x, self.start_pt_y, self.start_pt_z),
+            (self.end_pt_x, self.end_pt_y, self.end_pt_z),
+            start,
+            end,
+        ):
+            self._set_coordinate_value(start_edit, f"起点 {axis}", start_value)
+            self._set_coordinate_value(end_edit, f"终点 {axis}", end_value)
 
     # Event connectors
     def connect_events(self) -> None:
@@ -428,6 +638,9 @@ class GUI(QtWidgets.QMainWindow):
         #self.act_save_perspective.toggled.connect(set_keep_perspective)
         #self.act_align_pcd.toggled.connect(self.controller.align_mode.change_activation)
         self.act_change_settings.triggered.connect(self.show_settings_dialog)
+        self.act_ground_filter_settings = QtWidgets.QAction(tr("地面滤波设置…"), self)
+        self.menuSettings.addAction(self.act_ground_filter_settings)
+        self.act_ground_filter_settings.triggered.connect(self.show_ground_filter_settings)
 
      
         self.button_add_vertices.clicked.connect(lambda: self.toggle_roof_mode("point"))
@@ -485,6 +698,13 @@ class GUI(QtWidgets.QMainWindow):
 
     # Collect, filter and forward events to viewer
     def eventFilter(self, event_object, event) -> bool:
+        roof = self.controller.roof_plane_controller
+        if event_object == self.gl_widget and roof.handle_mouse(event):
+            return True
+        if roof.active and event.type() == QEvent.KeyPress and event_object == self.gl_widget:
+            self.controller.key_press_event(event)
+            self.gl_widget.update()
+            return True
         # Keyboard Events
         if (event.type() == QEvent.KeyPress) and event_object in [
             self,
@@ -503,11 +723,11 @@ class GUI(QtWidgets.QMainWindow):
         elif (event.type() == QEvent.Wheel) and (event_object == self.gl_widget):
             self.controller.mouse_scroll_event(event)
             #self.update_bbox_stats(self.controller.bbox_controller.get_active_bbox())
-        # elif event.type() == QEvent.MouseButtonDblClick and (
-        #     event_object == self.gl_widget
-        # ):
-        #     self.controller.mouse_double_clicked(event)
-        #     return True
+        elif event.type() == QEvent.MouseButtonDblClick and (
+            event_object == self.gl_widget
+        ):
+            self.controller.mouse_double_clicked(event)
+            return True
         # 鼠标按下：记录初始位置
         elif (event.type() == QEvent.MouseButtonPress) and (event_object == self.gl_widget):
             self.controller.mouse_pressed(event)
@@ -529,14 +749,22 @@ class GUI(QtWidgets.QMainWindow):
         return False
 
     def closeEvent(self, a0: QtGui.QCloseEvent) -> None:
+        if not self.controller.save():
+            a0.ignore()
+            return
+        self.controller.filter_controller.shutdown()
         logging.info("Closing window after saving ...")
-        self.controller.save()
         self.timer.stop()
         a0.accept()
 
     def show_settings_dialog(self) -> None:
         dialog = SettingsDialog(self)
         dialog.exec()
+
+    def show_ground_filter_settings(self) -> None:
+        from .ground_filter_dialog import GroundFilterDialog
+
+        GroundFilterDialog(self).exec_()
 
     def show_2d_image(self):
         """Searches for a 2D image with the point cloud name and displays it in a new window."""
@@ -555,10 +783,10 @@ class GUI(QtWidgets.QMainWindow):
         except StopIteration:
             QMessageBox.information(
                 self,
-                "No 2D Image File",
-                (
-                    f"Could not find a related image in the image folder ({image_folder}).\n"
-                    "Check your path to the folder or if an image for this point cloud exists."
+                tr("未找到二维图像"),
+                tr(
+                    "在图像文件夹（{folder}）中未找到对应图像。\n请检查文件夹路径以及是否存在与当前点云同名的图像。",
+                    folder=image_folder,
                 ),
                 QMessageBox.Ok,
             )
@@ -566,7 +794,7 @@ class GUI(QtWidgets.QMainWindow):
             image_path = image_folder.joinpath(image_name)
             image = QtGui.QImage(QtGui.QImageReader(str(image_path)).read())
             self.imageLabel = QLabel()
-            self.imageLabel.setWindowTitle(f"2D Image ({image_name})")
+            self.imageLabel.setWindowTitle(tr("二维图像（{name}）", name=image_name))
             self.imageLabel.setPixmap(QPixmap.fromImage(image))
             self.imageLabel.show()
 
@@ -576,21 +804,23 @@ class GUI(QtWidgets.QMainWindow):
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Warning)
         msg.setText(
-            "<b>labelCloud could not find any valid point cloud files inside the "
-            "specified folder.</b>"
+            tr("<b>指定文件夹中没有找到有效的点云文件。</b>")
         )
         msg.setInformativeText(
-            f"Please copy all your point clouds into <code>{pcd_folder.resolve()}</code> or update "
-            "the point cloud folder location. labelCloud supports the following point "
-            f"cloud file formats:\n {', '.join(pcd_extensions)}."
+            tr(
+                "请将点云文件放入 <code>{folder}</code>，或重新设置点云文件夹。当前支持以下点云格式：\n{formats}。",
+                folder=pcd_folder.resolve(),
+                formats=", ".join(sorted(pcd_extensions)),
+            )
         )
-        msg.setWindowTitle("No Point Clouds Found")
+        msg.setWindowTitle(tr("未找到点云文件"))
         msg.exec_()
 
     # VISUALIZATION METHODS
 
     def set_pcd_label(self, pcd_name: str) -> None:
-        self.label_current_pcd.setText("Current: <em>%s</em>" % pcd_name)
+        self._current_pcd_name = pcd_name
+        self.label_current_pcd.setText(tr("当前：<em>{name}</em>", name=pcd_name))
 
     def init_progress(self, min_value, max_value):
         self.progressbar_pcds.setMinimum(min_value)
@@ -676,23 +906,26 @@ class GUI(QtWidgets.QMainWindow):
         path_to_folder = Path(
             QFileDialog.getExistingDirectory(
                 self,
-                "Change Point Cloud Folder",
+                tr("选择点云文件夹"),
                 directory=config.get("FILE", "pointcloud_folder"),
             )
         )
         if not path_to_folder.is_dir():
             logging.warning("Please specify a valid folder path.")
         else:
+            if not self.controller.save():
+                return
             self.controller.pcd_manager.pcd_folder = path_to_folder
             self.controller.pcd_manager.read_pointcloud_folder()
-            self.controller.pcd_manager.get_next_pcd()
+            self.controller.roof_plane_controller.on_pointcloud_changed()
+            self.controller.next_pcd(save=False)
             logging.info("Changed point cloud folder to %s!" % path_to_folder)
 
     def change_label_folder(self) -> None:
         path_to_folder = Path(
             QFileDialog.getExistingDirectory(
                 self,
-                "Change Label Folder",
+                tr("选择标注文件夹"),
                 directory=config.get("FILE", "label_folder"),
             )
         )
@@ -738,8 +971,8 @@ class GUI(QtWidgets.QMainWindow):
         input_d = QInputDialog(self)
         self.input_pcd = input_d
         input_d.setInputMode(QInputDialog.IntInput)
-        input_d.setWindowTitle("labelCloud")
-        input_d.setLabelText("Insert Point Cloud number: ()")
+        input_d.setWindowTitle(tr("跳转到点云"))
+        input_d.setLabelText(tr("输入点云序号："))
         input_d.setIntMaximum(len(self.controller.pcd_manager.pcds) - 1)
         input_d.intValueChanged.connect(lambda val: self.update_dialog_pcd(val))
         input_d.intValueSelected.connect(lambda val: self.controller.custom_pcd(val))
@@ -748,7 +981,9 @@ class GUI(QtWidgets.QMainWindow):
 
     def update_dialog_pcd(self, value: int) -> None:
         pcd_path = self.controller.pcd_manager.pcds[value]
-        self.input_pcd.setLabelText(f"Insert Point Cloud number: {pcd_path.name}")
+        self.input_pcd.setLabelText(
+            tr("输入点云序号（{name}）：", name=pcd_path.name)
+        )
 
     # def change_label_color(self):
     #     bbox = self.controller.bbox_controller.get_active_bbox()
@@ -760,9 +995,9 @@ class GUI(QtWidgets.QMainWindow):
     def save_point_cloud_as(pointcloud: PointCloud) -> None:
         extensions = BasePointCloudHandler.get_supported_extensions()
         make_filter = " ".join(["*" + extension for extension in extensions])
-        file_filter = f"Point Cloud File ({make_filter})"
+        file_filter = tr("点云文件（{formats}）", formats=make_filter)
         file_name, _ = QFileDialog.getSaveFileName(
-            caption="Select a file name to save the point cloud",
+            caption=tr("选择点云保存位置"),
             directory=str(pointcloud.path.parent),
             filter=file_filter,
             initialFilter=file_filter,
@@ -777,18 +1012,37 @@ class GUI(QtWidgets.QMainWindow):
             handler.write_point_cloud(path, pointcloud)
         except Exception as e:
             msg = QMessageBox()
-            msg.setWindowTitle("Failed to save a point cloud")
+            msg.setWindowTitle(tr("点云保存失败"))
             msg.setText(e.__class__.__name__)
             msg.setInformativeText(traceback.format_exc())
             msg.setIcon(QMessageBox.Critical)
-            msg.setStandardButtons(QMessageBox.Cancel)
+            msg.setStandardButtons(QMessageBox.Close)
+            msg.button(QMessageBox.Close).setText(tr("关闭"))
             msg.exec_()
     
     def save_roof_annotations(self):
-        """保存屋顶标注为OBJ文件"""
-        filepath, _ = QFileDialog.getSaveFileName(self, "保存屋顶标注", "", "OBJ Files (*.obj)")
+        """将屋顶标注以原始点云的世界坐标导出为 OBJ。"""
+        if self.controller.roof_plane_controller.active:
+            self.controller.save(force_plane=True)
+            return
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, tr("保存屋顶标注"), "", tr("OBJ 文件 (*.obj)")
+        )
         if filepath:
-            self.controller.roof_drawing_manager.save_to_obj(filepath)
+            try:
+                self.controller.roof_drawing_manager.save_to_obj(
+                    filepath, self.controller.pcd_manager.pointcloud
+                )
+            except Exception:
+                logging.exception("Failed to export roof OBJ to %s", filepath)
+                QMessageBox.critical(
+                    self,
+                    tr("导出失败"),
+                    tr(
+                        "无法导出 OBJ：\n{path}\n\n请检查目录权限和磁盘空间。",
+                        path=filepath,
+                    ),
+                )
     
     def toggle_roof_mode(self, mode: str):
         current = self.controller.roof_drawing_mode

@@ -17,6 +17,15 @@ from ..definitions.types import Color4f, Point2D
 from ..utils import oglhelper
 
 
+def calculate_clipping_planes(focus_distance: float, extent: float):
+    """Calculate stable perspective clipping planes for the current zoom."""
+    extent = max(float(extent), 1e-6)
+    focus = max(float(focus_distance), extent * 1e-4, 1e-4)
+    near = max(1e-5, min(focus * 0.05, extent * 1e-3))
+    far = max(focus + extent * 4.0, near * 1000.0)
+    return near, far
+
+
 @contextmanager
 def ignore_depth_mask():
     GL.glDepthMask(GL.GL_FALSE)
@@ -66,7 +75,15 @@ class GLWidget(QtOpenGL.QGLWidget):
 
     def initializeGL(self) -> None:
         from OpenGL.GLUT import glutInit
-        glutInit()
+        self.glut_available = False
+        try:
+            glutInit()
+            self.glut_available = True
+        except Exception:
+            logging.warning(
+                "GLUT is unavailable; 3D text labels will be disabled.",
+                exc_info=True,
+            )
         bg_color = [
             int(fl_color)
             for fl_color in config.getlist("USER_INTERFACE", "BACKGROUND_COLOR")
@@ -78,28 +95,43 @@ class GLWidget(QtOpenGL.QGLWidget):
         logging.info("Intialized widget.")
 
         # Must be written again, due to buffer clearing
-        self.pcd_manager.pointcloud.create_buffers()  # type: ignore
+        if self.pcd_manager.pointcloud is not None:
+            self.pcd_manager.pointcloud.create_buffers()
 
     def resizeGL(self, width, height) -> None:
         logging.info("Resized widget.")
         GL.glViewport(0, 0, width, height)
+        self._update_projection(width, height)
+
+    def _update_projection(self, width=None, height=None) -> None:
+        """Continuously adapt clipping planes to the current zoom depth."""
+        viewport = GL.glGetIntegerv(GL.GL_VIEWPORT)
+        width = int(width if width is not None else viewport[2])
+        height = int(height if height is not None else viewport[3])
+        if width <= 0 or height <= 0:
+            return
         GL.glMatrixMode(GL.GL_PROJECTION)
         GL.glLoadIdentity()
         aspect = width / float(height)
-        # 动态计算near/far
-        if self.pcd_manager.pointcloud:
-            # 粗略估算当前相机距离（初始zoom在init_translation的z）
-            dist = abs(self.pcd_manager.pointcloud.trans_z)  # 或更精确计算
-            near = max(0.1, dist * 0.01)   # near为距离的1%
-            far = dist * 100.0              # far为距离的10倍，确保覆盖点云
+        pointcloud = self.pcd_manager.pointcloud
+        if pointcloud is not None:
+            extent = max(
+                float(np.linalg.norm(pointcloud.pcd_maxs - pointcloud.pcd_mins)),
+                1e-6,
+            )
+            near, far = calculate_clipping_planes(
+                pointcloud.focus_distance(), extent
+            )
         else:
-            near = 1.0
-            far = 10000.0
+            near, far = 0.01, 1000.0
         GLU.gluPerspective(45.0, aspect, near, far)
         GL.glMatrixMode(GL.GL_MODELVIEW)
 
     def paintGL(self) -> None:
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
+        if self.pcd_manager.pointcloud is None:
+            return
+        self._update_projection()
         GL.glPushMatrix()  # push the current matrix to the current stack
 
         # Draw point cloud
@@ -108,13 +140,16 @@ class GLWidget(QtOpenGL.QGLWidget):
         # Get actual matrices for click unprojection
         self.modelview = GL.glGetDoublev(GL.GL_MODELVIEW_MATRIX)
         self.projection = GL.glGetDoublev(GL.GL_PROJECTION_MATRIX)
+        plane_control = getattr(self, "roof_plane_controller", None)
+        if plane_control and plane_control.active:
+            plane_control.camera_observed(self.modelview, self.projection, self.width(), self.height())
 
         with ignore_depth_mask():  # Do not write decoration and preview elements in depth buffer
             if config.getboolean("USER_INTERFACE", "show_floor"):
                 oglhelper.draw_xy_plane(self.pcd_manager.pointcloud)  # type: ignore
 
             # Draw crosshair/ cursor in 3D world
-            if self.crosshair_pos:
+            if self.crosshair_pos and not (plane_control and plane_control.active):
                 cx, cy, cz = self.get_world_coords(*self.crosshair_pos, correction=True)
                 oglhelper.draw_crosshair(cx, cy, cz, color=self.crosshair_col)
 
@@ -131,7 +166,8 @@ class GLWidget(QtOpenGL.QGLWidget):
                     self.selected_side_vertices, color=(0, 1, 0, 0.3)
                 )
 
-        if hasattr(self, 'roof_drawing_manager') and self.roof_drawing_manager:
+        plane_mode = getattr(self, "roof_plane_controller", None)
+        if hasattr(self, 'roof_drawing_manager') and self.roof_drawing_manager and not (plane_mode and plane_mode.active):
             mgr = self.roof_drawing_manager
             self.draw_roof_annotations()
 
@@ -171,7 +207,7 @@ class GLWidget(QtOpenGL.QGLWidget):
                 
                 draw_text = None
 
-            if draw_text and (mgr.vertices or mgr.lines):
+            if self.glut_available and draw_text and (mgr.vertices or mgr.lines):
                 GL.glDisable(GL.GL_DEPTH_TEST)  # 文字始终在最上层
 
                 # 动态计算偏移量（根据点云高度自适应，避免太小或太大）
@@ -197,11 +233,44 @@ class GLWidget(QtOpenGL.QGLWidget):
                 GL.glEnable(GL.GL_DEPTH_TEST)
 
         GL.glPopMatrix()  # restore the previous modelview matrix
+        if plane_mode and plane_mode.active:
+            plane_mode.draw_roi_boundary()
+            self.draw_plane_selection(plane_mode.polygon())
+
+    def draw_plane_selection(self, polygon):
+        """选框使用逻辑像素，与 Qt 鼠标位置保持一致（含高 DPI）。"""
+        if len(polygon) < 2:
+            return
+        GL.glPushAttrib(GL.GL_ENABLE_BIT | GL.GL_CURRENT_BIT | GL.GL_LINE_BIT)
+        GL.glDisable(GL.GL_DEPTH_TEST)
+        GL.glMatrixMode(GL.GL_PROJECTION)
+        GL.glPushMatrix()
+        GL.glLoadIdentity()
+        GL.glOrtho(0, self.width(), self.height(), 0, -1, 1)
+        GL.glMatrixMode(GL.GL_MODELVIEW)
+        GL.glPushMatrix()
+        GL.glLoadIdentity()
+        GL.glColor3f(1.0, 0.85, 0.05)
+        GL.glLineWidth(2)
+        GL.glBegin(GL.GL_LINE_LOOP)
+        for x, y in polygon:
+            GL.glVertex2f(x, y)
+        GL.glEnd()
+        GL.glPopMatrix()
+        GL.glMatrixMode(GL.GL_PROJECTION)
+        GL.glPopMatrix()
+        GL.glMatrixMode(GL.GL_MODELVIEW)
+        GL.glPopAttrib()
 
     # Translates the 2D cursor position from screen plane into 3D world space coordinates
     def get_world_coords(
-        self, x: float, y: float, z: Optional[float] = None, correction: bool = False
-    ) -> Tuple[float, float, float]:
+        self,
+        x: float,
+        y: float,
+        z: Optional[float] = None,
+        correction: bool = False,
+        require_surface: bool = False,
+    ) -> Optional[Tuple[float, float, float]]:
         x *= self.DEVICE_PIXEL_RATIO  # For fixing mac retina bug
         y *= self.DEVICE_PIXEL_RATIO
 
@@ -222,7 +291,16 @@ class GLWidget(QtOpenGL.QGLWidget):
             )
             z = depths[center][center]  # Read selected pixel from depth buffer
 
-            if z == 1:
+            if require_surface:
+                selected = depths[circular_mask(len(depths), center, 10)]
+                valid_depths = selected[
+                    np.isfinite(selected) & (selected > 0) & (selected < 1)
+                ]
+                if len(valid_depths) == 0:
+                    return None
+                z = float(np.min(valid_depths))
+
+            elif z == 1:
                 z = depth_smoothing(depths, center)
             elif correction:
                 z = depth_min(depths, center)
@@ -231,6 +309,12 @@ class GLWidget(QtOpenGL.QGLWidget):
             x, real_y, z, self.modelview, self.projection, viewport
         )
         return mod_x, mod_y, mod_z
+
+    def pick_surface_point(self, x: float, y: float):
+        """Pick visible point-cloud geometry near a screen position."""
+        if self.modelview is None or self.projection is None:
+            return None
+        return self.get_world_coords(x, y, correction=True, require_surface=True)
 
     def draw_roof_annotations(self):
         mgr = getattr(self, "roof_drawing_manager", None)

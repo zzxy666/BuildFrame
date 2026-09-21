@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>MainWindow</string>
+   <string>BuildFrame 点云标注</string>
   </property>
   <property name="windowIcon">
    <iconset>
@@ -87,7 +87,7 @@
             </font>
            </property>
            <property name="text">
-            <string>Point Cloud</string>
+            <string>点云文件</string>
            </property>
            <property name="alignment">
             <set>Qt::AlignCenter</set>
@@ -164,17 +164,17 @@
            <item>
             <widget class="QPushButton" name="button_prev_pcd">
              <property name="toolTip">
-              <string>Save current labels and load previous point cloud.</string>
+              <string>保存当前标注并加载上一个点云。</string>
              </property>
              <property name="text">
-              <string>« Previous</string>
+              <string>上一个</string>
              </property>
             </widget>
            </item>
            <item>
             <widget class="QPushButton" name="button_set_pcd">
              <property name="text">
-              <string>Set</string>
+              <string>跳转</string>
              </property>
             </widget>
            </item>
@@ -187,7 +187,7 @@
               </sizepolicy>
              </property>
              <property name="toolTip">
-              <string>Save current labels and load next point cloud.</string>
+              <string>保存当前标注并加载下一个点云。</string>
              </property>
              <property name="layoutDirection">
               <enum>Qt::LeftToRight</enum>
@@ -196,7 +196,7 @@
               <string notr="true"/>
              </property>
              <property name="text">
-              <string>Next »</string>
+              <string>下一个</string>
              </property>
              <property name="flat">
               <bool>false</bool>
@@ -224,7 +224,7 @@
          <string notr="true"/>
         </property>
         <property name="title">
-         <string>Point Control</string>
+         <string>点位微调</string>
         </property>
         <layout class="QGridLayout" name="gridLayout">
          <item row="0" column="0">
@@ -528,7 +528,7 @@
          <string notr="true"/>
         </property>
         <property name="title">
-         <string>View Control</string>
+         <string>视角控制</string>
         </property>
         <layout class="QGridLayout" name="gridLayout_2">
          <item row="0" column="0">
@@ -555,7 +555,7 @@
             <string/>
            </property>
            <property name="text">
-            <string>Top</string>
+            <string>上视图</string>
            </property>
            <property name="iconSize">
             <size>
@@ -598,7 +598,7 @@
             <string/>
            </property>
            <property name="text">
-            <string>Right</string>
+            <string>右视图</string>
            </property>
            <property name="iconSize">
             <size>
@@ -641,7 +641,7 @@
             <string/>
            </property>
            <property name="text">
-            <string>Back</string>
+            <string>后视图</string>
            </property>
            <property name="iconSize">
             <size>
@@ -684,7 +684,7 @@
             <string/>
            </property>
            <property name="text">
-            <string>Left</string>
+            <string>左视图</string>
            </property>
            <property name="iconSize">
             <size>
@@ -727,7 +727,7 @@
             <string/>
            </property>
            <property name="text">
-            <string>Front</string>
+            <string>前视图</string>
            </property>
            <property name="iconSize">
             <size>
@@ -770,7 +770,7 @@
             <string/>
            </property>
            <property name="text">
-            <string>Bottom</string>
+            <string>下视图</string>
            </property>
            <property name="iconSize">
             <size>
@@ -820,7 +820,7 @@
          <enum>Qt::LeftToRight</enum>
         </property>
         <property name="text">
-         <string>Add vertices</string>
+         <string>添加顶点</string>
         </property>
         <property name="icon">
          <iconset>
@@ -861,7 +861,7 @@
          <enum>Qt::LeftToRight</enum>
         </property>
         <property name="text">
-         <string>Add lines</string>
+         <string>绘制边线</string>
         </property>
         <property name="icon">
          <iconset>
@@ -893,7 +893,7 @@
       <item>
        <widget class="QPushButton" name="button_point_cloud_filtering">
         <property name="text">
-         <string>Point cloud filtering</string>
+         <string>点云滤波</string>
         </property>
         <property name="icon">
          <iconset>
@@ -913,7 +913,7 @@
       <item>
        <widget class="QPushButton" name="button_save_label">
         <property name="text">
-         <string>Save Label</string>
+         <string>保存标注</string>
         </property>
         <property name="icon">
          <iconset>
@@ -996,7 +996,7 @@
          <string notr="true">margin-top: 10;</string>
         </property>
         <property name="text">
-         <string>Labels</string>
+         <string>标注列表</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignCenter</set>
@@ -1030,7 +1030,7 @@
          </font>
         </property>
         <property name="title">
-         <string>Current Line:</string>
+         <string>选中线坐标</string>
         </property>
         <widget class="QLabel" name="label">
          <property name="geometry">
@@ -1042,7 +1042,7 @@
           </rect>
          </property>
          <property name="text">
-          <string>start pt</string>
+          <string>起点</string>
          </property>
         </widget>
         <widget class="QLabel" name="label_2">
@@ -1055,7 +1055,7 @@
           </rect>
          </property>
          <property name="text">
-          <string>end   pt</string>
+          <string>终点</string>
          </property>
         </widget>
         <widget class="QLineEdit" name="start_pt_x">
@@ -1165,7 +1165,7 @@
          </font>
         </property>
         <property name="title">
-         <string>Current Vertex:</string>
+         <string>选中点坐标</string>
         </property>
         <widget class="QLabel" name="label_3">
          <property name="geometry">
@@ -1238,10 +1238,10 @@
         <item>
          <widget class="QPushButton" name="button_deselect_label">
           <property name="toolTip">
-           <string>Deselect current bounding box.</string>
+           <string>取消当前选择。</string>
           </property>
           <property name="text">
-           <string>Deselect</string>
+           <string>取消选择</string>
           </property>
           <property name="icon">
            <iconset>
@@ -1258,10 +1258,10 @@
         <item>
          <widget class="QPushButton" name="button_delete_label">
           <property name="toolTip">
-           <string>Delete current bounding box. [DEL]</string>
+           <string>删除当前选中的点或线。[Del]</string>
           </property>
           <property name="text">
-           <string>Delete</string>
+           <string>删除</string>
           </property>
           <property name="icon">
            <iconset>
@@ -1367,7 +1367,7 @@
      <string notr="true"/>
     </property>
     <property name="title">
-     <string>File</string>
+     <string>文件</string>
     </property>
     <property name="toolTipsVisible">
      <bool>true</bool>
@@ -1377,14 +1377,14 @@
    </widget>
    <widget class="QMenu" name="menuLabels">
     <property name="title">
-     <string>Labels</string>
+     <string>标注</string>
     </property>
     <property name="toolTipsVisible">
      <bool>true</bool>
     </property>
     <widget class="QMenu" name="act_set_default_class">
      <property name="title">
-      <string>Set Default Object Class …</string>
+      <string>设置默认对象类别…</string>
      </property>
     </widget>
     <addaction name="act_set_default_class"/>
@@ -1393,7 +1393,7 @@
    </widget>
    <widget class="QMenu" name="menuSettings">
     <property name="title">
-     <string>Settings</string>
+     <string>设置</string>
     </property>
     <property name="toolTipsVisible">
      <bool>true</bool>
@@ -1411,17 +1411,17 @@
   <widget class="QStatusBar" name="status_bar"/>
   <action name="act_set_pcd_folder">
    <property name="text">
-    <string>Set Point Cloud Folder…</string>
+    <string>设置点云文件夹…</string>
    </property>
   </action>
   <action name="act_set_label_folder">
    <property name="text">
-    <string>Set Label Folder…</string>
+    <string>设置标注文件夹…</string>
    </property>
   </action>
   <action name="action_loadsinglepcd">
    <property name="text">
-    <string>Load Single Point Cloud…</string>
+    <string>加载单个点云…</string>
    </property>
   </action>
   <action name="act_z_rotation_only">
@@ -1432,10 +1432,10 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Z-Rotation Only Mode</string>
+    <string>仅绕 Z 轴旋转</string>
    </property>
    <property name="toolTip">
-    <string>Only allows bounding box rotation around the z-axis.</string>
+    <string>仅允许标注对象绕 Z 轴旋转。</string>
    </property>
   </action>
   <action name="act_color_with_label">
@@ -1443,27 +1443,27 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Color with labels</string>
+    <string>按标注着色</string>
    </property>
   </action>
   <action name="act_delete_all_labels">
    <property name="text">
-    <string>Delete All Current Labels</string>
+    <string>删除当前全部标注</string>
    </property>
   </action>
   <action name="act_set_std_dimensions">
    <property name="text">
-    <string>Set Default Bounding Box Dimensions ...</string>
+    <string>设置默认边界框尺寸…</string>
    </property>
   </action>
   <action name="act_set_std_transformations">
    <property name="text">
-    <string>Set Default Transformation Steps …</string>
+    <string>设置默认变换步长…</string>
    </property>
   </action>
   <action name="act_point_size">
    <property name="text">
-    <string>Point Size</string>
+    <string>点大小</string>
    </property>
   </action>
   <action name="act_show_floor">
@@ -1474,10 +1474,10 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Show Floor</string>
+    <string>显示地面网格</string>
    </property>
    <property name="toolTip">
-    <string>Shows a grid along the x-y-plane (z=0).</string>
+    <string>在 X-Y 平面（Z=0）显示网格。</string>
    </property>
   </action>
   <action name="act_show_orientation">
@@ -1488,7 +1488,7 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Show Orientation</string>
+    <string>显示方向指示</string>
    </property>
   </action>
   <action name="act_save_perspective">
@@ -1499,11 +1499,10 @@
     <bool>false</bool>
    </property>
    <property name="text">
-    <string>Keep Perspective</string>
+    <string>保留视角</string>
    </property>
    <property name="toolTip">
-    <string>Saves the last perspective and reuses it,
-when opening that point cloud again.</string>
+    <string>保存当前视角，并在下次打开该点云时恢复。</string>
    </property>
   </action>
   <action name="act_align_pcd">
@@ -1514,20 +1513,20 @@ when opening that point cloud again.</string>
     <bool>false</bool>
    </property>
    <property name="text">
-    <string>Align Point Cloud</string>
+    <string>对齐点云</string>
    </property>
    <property name="toolTip">
-    <string>Transforms the point cloud so that the floor is the x-y-plane.</string>
+    <string>变换点云，使地面与 X-Y 平面对齐。</string>
    </property>
   </action>
   <action name="act_change_settings">
    <property name="text">
-    <string>Change Settings ...</string>
+    <string>修改设置…</string>
    </property>
   </action>
   <action name="actiontest">
    <property name="text">
-    <string>test</string>
+    <string>测试</string>
    </property>
   </action>
   <action name="act_propagate_labels">
@@ -1535,11 +1534,10 @@ when opening that point cloud again.</string>
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Propagate Labels</string>
+    <string>延续标注</string>
    </property>
    <property name="toolTip">
-    <string>Propagate Labels to the next Point Cloud
-if it does not have labels yet.</string>
+    <string>当下一个点云尚无标注时，将当前标注延续过去。</string>
    </property>
   </action>
  </widget>

@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import shutil
 from enum import Enum
@@ -74,7 +75,9 @@ class UncolorFormatter(logging.Formatter):
 
 # Create handlers
 c_handler = logging.StreamHandler()
-f_handler = logging.FileHandler(".labelCloud.log", mode="w")
+f_handler = logging.FileHandler(
+    os.environ.get("BUILDFRAME_LOG_PATH", ".labelCloud.log"), mode="a"
+)
 c_handler.setLevel(logging.INFO)  # TODO: Automatic coloring
 f_handler.setLevel(logging.DEBUG)  # TODO: Filter colors
 

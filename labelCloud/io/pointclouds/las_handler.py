@@ -16,27 +16,24 @@ class LASHandler(BasePointCloudHandler):
     def read_point_cloud(self, path: Path):
         logging.info(f"Reading LAS file: {path}")
 
-        las = laspy.read(path)
-
-        # XYZ
-        points = np.vstack([las.x, las.y, las.z]).T.astype(np.float32)
-
-        # Colors 
-        colors = None
-        if hasattr(las, "red"):
-            red = las.red / 65535.0
-            green = las.green / 65535.0
-            blue = las.blue / 65535.0
-            colors_temp = np.vstack([red, green, blue]).T.astype(np.float32)
-
-            # 如果颜色全为0（或全相同且为0），认为无有效颜色
-            if np.all(colors_temp == 0):
-                colors = None  # 强制触发无颜色逻辑 → 高程伪彩
-                logging.info("LAS文件检测到无效RGB（全黑），将使用高程伪彩显示")
-            else:
-                colors = colors_temp
-        else:
-            logging.info("LAS文件无RGB通道，将使用高程伪彩显示")
+        # 与 Roof Plane 保存共用解压器选择，支持新版压缩的 LAZ。
+        from ...model.scene_session import las_backend
+        # 分块解压，不在内存中同时保留整份 LAS 点记录和多份 XYZ/RGB。
+        with laspy.open(path, laz_backend=las_backend()) as reader:
+            points = np.empty((reader.header.point_count, 3), np.float64)
+            has_rgb = "red" in reader.header.point_format.dimension_names
+            colors = np.empty(points.shape, np.float32) if has_rgb else None
+            offset = 0
+            for chunk in reader.chunk_iterator(250000):
+                end = offset + len(chunk)
+                for column, dim in enumerate(("x", "y", "z")):
+                    points[offset:end, column] = chunk[dim]
+                if has_rgb:
+                    for column, dim in enumerate(("red", "green", "blue")):
+                        colors[offset:end, column] = chunk[dim] / 65535.
+                offset = end
+            if has_rgb and not np.any(colors):
+                colors = None
 
         return points, colors
 

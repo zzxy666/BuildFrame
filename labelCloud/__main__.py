@@ -1,77 +1,18 @@
 import argparse
 import logging
-import atexit
-from pathlib import Path
-from labelCloud.control.config_manager import config
 from labelCloud import __version__
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Label 3D bounding boxes inside point clouds."
-    )
-    parser.add_argument(
-        "-e",
-        "--example",
-        action="store_true",
-        help="Setup a project with an example point cloud and label.",
+        description="Annotate roof vertices and edges in urban point clouds."
     )
     parser.add_argument(
         "-v", "--version", action="version", version="%(prog)s " + __version__
     )
     args = parser.parse_args()
 
-    if args.example:
-        setup_example_project()
-
     start_gui()
-
-
-def setup_example_project() -> None:
-    import shutil
-    from pathlib import Path
-
-    import pkg_resources
-
-    logging.info(
-        "Starting labelCloud in example mode.\n"
-        "Setting up project with example point cloud ,label and default config."
-    )
-    cwdir = Path().cwd()
-
-    # Create folders
-    pcd_folder = cwdir.joinpath(config.get("FILE", "pointcloud_folder"))
-    pcd_folder.mkdir(exist_ok=True)
-    label_folder = cwdir.joinpath(config.get("FILE", "label_folder"))
-    label_folder.mkdir(exist_ok=True)
-
-    # Copy example files
-    shutil.copy(
-        pkg_resources.resource_filename("labelCloud.resources", "default_config.ini"),
-        str(cwdir.joinpath("config.ini")),
-    )
-    shutil.copy(
-        pkg_resources.resource_filename(
-            "labelCloud.resources.examples", "exemplary.ply"
-        ),
-        str(pcd_folder.joinpath("exemplary.ply")),
-    )
-    shutil.copy(
-        pkg_resources.resource_filename("labelCloud.resources", "default_classes.json"),
-        str(label_folder.joinpath("_classes.json")),
-    )
-    shutil.copy(
-        pkg_resources.resource_filename(
-            "labelCloud.resources.examples", "exemplary.json"
-        ),
-        str(label_folder.joinpath("exemplary.json")),
-    )
-    logging.info(
-        f"Setup example project in {cwdir}:"
-        "\n - config.ini"
-        "\n - pointclouds/exemplary.ply"
-        "\n - labels/exemplary.json"
-    )
 
 
 def start_gui():
@@ -79,16 +20,19 @@ def start_gui():
 
     from PyQt5.QtWidgets import QApplication, QDesktopWidget
 
+    from labelCloud.control.config_manager import config
     from labelCloud.control.controller import Controller
     from labelCloud.view.gui import GUI
+    from labelCloud.view.i18n import LANGUAGE_CHINESE, language_manager
 
     app = QApplication(sys.argv)
+    language_manager.set_language(
+        config.get("USER_INTERFACE", "language", fallback=LANGUAGE_CHINESE)
+    )
 
     # Setup Model-View-Control structure
     control = Controller()
     view = GUI(control)
-
-    atexit.register(cleanup_roof_obj_files)
 
     # Install event filter to catch user interventions
     app.installEventFilter(view)
@@ -104,19 +48,6 @@ def start_gui():
 
     logging.info("Showing GUI...")
     sys.exit(app.exec_())
-
-def cleanup_roof_obj_files():
-    """程序退出时删除所有 .roof.obj 文件"""
-    pcd_folder = Path(config.get("FILE", "pointcloud_folder"))
-    if not pcd_folder.exists():
-        return
-
-    for obj_file in pcd_folder.rglob("*.roof.obj"):
-        try:
-            obj_file.unlink()
-            print(f"[Cleanup] 已删除临时屋顶标注: {obj_file}")
-        except Exception as e:
-            print(f"[Cleanup] 删除 {obj_file} 失败: {e}")
 
 if __name__ == "__main__":
     main()

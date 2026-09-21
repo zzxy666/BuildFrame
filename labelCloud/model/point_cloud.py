@@ -52,14 +52,30 @@ class PointCloud(object):
         segmentation_labels: Optional[npt.NDArray[np.int8]] = None,
         init_translation: Optional[Tuple[float, float, float]] = None,
         init_rotation: Optional[Tuple[float, float, float]] = None,
+        original_center: Optional[npt.NDArray] = None,
+        applied_scale: float = 1.0,
         write_buffer: bool = True,
     ) -> None:
         start_section(f"Loading {path.name}")
         self.path = path
         self.points = points
         self.colors = colors if type(colors) == np.ndarray and len(colors) > 0 else None
+        self.original_colors = self.colors
+        self.original_center = np.asarray(
+            original_center if original_center is not None else np.zeros(3),
+            dtype=np.float64,
+        )
+        self.applied_scale = float(applied_scale)
+        if self.applied_scale <= 0:
+            raise ValueError("applied_scale must be greater than zero")
 
         self.labels = None
+        self.display_colors = None
+        self.display_colors_dirty = False
+        self.display_indices = None
+        self.overlays = []
+        self.color_updates = []
+        self.lod_stride = 1
         # if LabelConfig().type == LabelingMode.SEMANTIC_SEGMENTATION:
         #     self.labels = segmentation_labels
         #     self.validate_segmentation_label()
@@ -69,6 +85,10 @@ class PointCloud(object):
         self.center: Point3D = tuple(np.sum(points[:, i]) / len(points) for i in range(3))  # type: ignore
         self.pcd_mins: npt.NDArray[np.float32] = np.amin(points, axis=0)
         self.pcd_maxs: npt.NDArray[np.float32] = np.amax(points, axis=0)
+        self.default_orbit_pivot = np.add(
+            self.pcd_mins, np.subtract(self.pcd_maxs, self.pcd_mins) / 2
+        ).astype(np.float64)
+        self.orbit_pivot = self.default_orbit_pivot.copy()
         self.init_translation: Point3D = init_translation or calculate_init_translation(
             self.center, self.pcd_mins, self.pcd_maxs
         )
@@ -111,6 +131,7 @@ class PointCloud(object):
 
     def create_buffers(self) -> None:
         """Create 3 different buffers holding points, colors and label colors information"""
+        self.release_buffers()
         self.colors = cast(npt.NDArray[np.float32], self.colors)
         (
             self.position_vbo,
@@ -125,6 +146,44 @@ class PointCloud(object):
             GL.glBindBuffer(GL.GL_ARRAY_BUFFER, vbo)
             GL.glBufferData(GL.GL_ARRAY_BUFFER, data.nbytes, data, GL.GL_DYNAMIC_DRAW)
             GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
+        self.display_colors_dirty = self.display_colors is not None
+
+    def set_display_colors(self, colors) -> None:
+        """只改变显示缓冲；原始 RGB 保留在 self.colors 和 LAS 中。"""
+        self.display_colors = None if colors is None else np.ascontiguousarray(colors, dtype=np.float32)
+        self.display_colors_dirty = True
+
+    def update_display_colors(self, ids, colors):
+        if self.display_colors is not None and len(ids):
+            self.display_colors[ids] = colors
+            self.color_updates.extend(np.unique(np.asarray(ids)//250000).tolist())
+
+    def set_overlays(self, layers):
+        self.overlays = [(np.ascontiguousarray(ids, dtype=np.uint32), color)
+                         for ids, color in layers if len(ids)]
+
+    def set_display_mask(self, visible=None) -> None:
+        """只筛选绘制索引，不裁剪/重排原始 XYZ、RGB 或标签数组。"""
+        if visible is None:
+            self.display_indices = None
+            return
+        visible = np.asarray(visible, dtype=bool)
+        if visible.shape != (len(self.points),):
+            raise ValueError("显示掩膜与原始点数不一致")
+        self.display_indices = np.ascontiguousarray(np.flatnonzero(visible), dtype=np.uint32)
+
+    def release_buffers(self) -> None:
+        buffer_ids = [
+            getattr(self, name, None)
+            for name in ("position_vbo", "color_vbo", "label_vbo")
+        ]
+        existing = [buffer_id for buffer_id in buffer_ids if buffer_id]
+        if existing:
+            try:
+                GL.glDeleteBuffers(len(existing), existing)
+            except Exception:
+                logging.debug("Could not release OpenGL buffers", exc_info=True)
+        self.position_vbo = self.color_vbo = self.label_vbo = None
 
     @property
     def label_colors(self) -> npt.NDArray[np.float32]:
@@ -166,27 +225,25 @@ class PointCloud(object):
             path.suffix
         ).read_point_cloud(path=path)
         
-        if points is not None and len(points) > 0:
-            import numpy as np
+        if points is None or len(points) == 0:
+            raise ValueError(f"Point cloud contains no points: {path}")
 
-            # 计算中心点
-            center = points.mean(axis=0)
-            scale = 0
-            # 平移点云
-            points -= center
+        # Keep a per-cloud reversible transform. Rendering and annotations use
+        # local coordinates; file exports can convert them back to world space.
+        points = np.asarray(points, dtype=np.float64)
+        center = points.mean(axis=0, dtype=np.float64)
+        scale = 1.0
+        points -= center
 
-            # 可选：归一化到 [-1,1] 或 [-100,100] 范围（避免裁剪）
-            bbox_size = np.linalg.norm(points.max(axis=0) - points.min(axis=0))
-            if bbox_size > 1e4:  # 如果范围太大，自动缩放
-                scale = bbox_size / 100.0
-                points /= scale
-                logging.info(f"Auto-scaled point cloud by factor 1/{scale:.2f}")
-            
+        bbox_size = float(np.linalg.norm(points.max(axis=0) - points.min(axis=0)))
+        if bbox_size > 1e4:
+            scale = bbox_size / 100.0
+            points /= scale
+            logging.info(f"Auto-scaled point cloud by factor 1/{scale:.2f}")
 
-            logging.info(f"Centered point cloud at origin, original center = {center}")
-            # 保存中心，用于导出时加回
-            cls.last_center = center
-            cls.last_scale = bbox_size / 100.0
+        points = points.astype(np.float32)
+
+        logging.info(f"Centered point cloud at origin, original center = {center}")
 
 
 
@@ -208,8 +265,30 @@ class PointCloud(object):
             labels,
             init_translation,
             init_rotation,
+            center,
+            scale,
             write_buffer,
         )
+
+    def to_world_coordinates(self, points: npt.ArrayLike) -> npt.NDArray[np.float64]:
+        """Convert rendering/local coordinates to source-file coordinates."""
+        local = np.asarray(points, dtype=np.float64)
+        return local * self.applied_scale + self.original_center
+
+    def to_local_coordinates(self, points: npt.ArrayLike) -> npt.NDArray[np.float64]:
+        """Convert source-file coordinates to rendering/local coordinates."""
+        world = np.asarray(points, dtype=np.float64)
+        return (world - self.original_center) / self.applied_scale
+
+    @property
+    def last_center(self) -> npt.NDArray[np.float64]:
+        """Backward-compatible alias for older UI code."""
+        return self.original_center
+
+    @property
+    def last_scale(self) -> float:
+        """Backward-compatible alias for older UI code."""
+        return self.applied_scale
 
     # def validate_segmentation_label(self) -> None:
     #     unique_label_ids = set(np.unique(self.labels))  # type: ignore
@@ -336,25 +415,82 @@ class PointCloud(object):
         self.trans_y = y
         self.trans_z = z
 
+    def _rotation_matrix(self) -> npt.NDArray[np.float64]:
+        """Return the matrix matching the legacy OpenGL X/Y/Z call order."""
+        x, y, z = np.deg2rad([self.rot_x, self.rot_y, self.rot_z])
+        rx = np.array(
+            [[1, 0, 0], [0, np.cos(x), -np.sin(x)], [0, np.sin(x), np.cos(x)]]
+        )
+        ry = np.array(
+            [[np.cos(y), 0, np.sin(y)], [0, 1, 0], [-np.sin(y), 0, np.cos(y)]]
+        )
+        rz = np.array(
+            [[np.cos(z), -np.sin(z), 0], [np.sin(z), np.cos(z), 0], [0, 0, 1]]
+        )
+        return rx @ ry @ rz
+
+    def set_orbit_pivot(self, pivot: npt.ArrayLike) -> None:
+        """Change the orbit pivot without moving the currently rendered scene."""
+        new_pivot = np.asarray(pivot, dtype=np.float64)
+        if new_pivot.shape != (3,) or not np.isfinite(new_pivot).all():
+            raise ValueError("orbit pivot must contain three finite coordinates")
+        old_pivot = self.orbit_pivot
+        rotation = self._rotation_matrix()
+        compensation = (np.eye(3) - rotation) @ (old_pivot - new_pivot)
+        self.trans_x += float(compensation[0])
+        self.trans_y += float(compensation[1])
+        self.trans_z += float(compensation[2])
+        self.orbit_pivot = new_pivot
+
+    def reset_orbit_pivot(self) -> None:
+        self.set_orbit_pivot(self.default_orbit_pivot)
+
+    def focus_distance(self) -> float:
+        """Distance from the camera plane to the current orbit/zoom pivot."""
+        return max(0.0, -float(self.trans_z + self.orbit_pivot[2]))
+
+    def dolly(self, wheel_delta: float) -> float:
+        """Exponentially zoom without crossing the current focus point."""
+        extent = max(float(np.linalg.norm(self.pcd_maxs - self.pcd_mins)), 1e-6)
+        minimum = max(extent * 1e-4, 1e-4)
+        maximum = max(extent * 1e3, minimum)
+        current = max(self.focus_distance(), minimum)
+        wheel_steps = float(wheel_delta) / 120.0
+        target = float(np.clip(current * (0.82**wheel_steps), minimum, maximum))
+        self.trans_z = -target - float(self.orbit_pivot[2])
+        return target
+
     def set_gl_background(self) -> None:
         GL.glTranslate(
             self.trans_x, self.trans_y, self.trans_z
         )  # third, pcd translation
 
-        pcd_center = np.add(
-            self.pcd_mins, (np.subtract(self.pcd_maxs, self.pcd_mins) / 2)
-        )
-        GL.glTranslate(*pcd_center)  # move point cloud back
+        GL.glTranslate(*self.orbit_pivot)
 
         GL.glRotate(self.rot_x, 1.0, 0.0, 0.0)
         GL.glRotate(self.rot_y, 0.0, 1.0, 0.0)  # second, pcd rotation
         GL.glRotate(self.rot_z, 0.0, 0.0, 1.0)
 
-        GL.glTranslate(*(pcd_center * -1))  # move point cloud to center for rotation
+        GL.glTranslate(*(-self.orbit_pivot))
         GL.glPointSize(self.point_size)
 
     def draw_pointcloud(self) -> None:
+        if getattr(self, "position_vbo", None) is None:
+            self.create_buffers()  # 只在当前 OpenGL 上下文中创建，导航/后台加载不创建 VBO。
         self.set_gl_background()
+        if self.display_colors_dirty:
+            colors = self.colors if self.display_colors is None else self.display_colors
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.color_vbo)
+            GL.glBufferData(GL.GL_ARRAY_BUFFER, colors.nbytes, colors, GL.GL_DYNAMIC_DRAW)
+            self.display_colors_dirty = False
+            self.color_updates.clear()
+        elif self.color_updates and self.display_colors is not None:
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.color_vbo)
+            for block in sorted(set(self.color_updates)):
+                first = block*250000
+                data = self.display_colors[first:first+250000]
+                GL.glBufferSubData(GL.GL_ARRAY_BUFFER, first*3*SIZE_OF_FLOAT, data.nbytes, data)
+            self.color_updates.clear()
         stride = 3 * SIZE_OF_FLOAT
 
         # Bind position buffer
@@ -363,14 +499,39 @@ class PointCloud(object):
         GL.glVertexPointer(3, GL.GL_FLOAT, stride, None)
 
         # Bind color buffer
-        if self.color_with_label:
+        if self.color_with_label and self.display_colors is None:
             color_vbo = self.label_vbo
         else:
             color_vbo = self.color_vbo
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, color_vbo)
         GL.glEnableClientState(GL.GL_COLOR_ARRAY)
         GL.glColorPointer(3, GL.GL_FLOAT, stride, None)
-        GL.glDrawArrays(GL.GL_POINTS, 0, self.get_no_of_points())  # Draw the points
+        if self.display_indices is None:
+            step = self.lod_stride
+            if step > 1:
+                GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.position_vbo)
+                GL.glVertexPointer(3, GL.GL_FLOAT, stride*step, None)
+                GL.glBindBuffer(GL.GL_ARRAY_BUFFER, color_vbo)
+                GL.glColorPointer(3, GL.GL_FLOAT, stride*step, None)
+            GL.glDrawArrays(GL.GL_POINTS, 0, (self.get_no_of_points()+step-1)//step)
+        else:
+            GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, 0)
+            ids = self.display_indices[::self.lod_stride]
+            GL.glDrawElements(GL.GL_POINTS, len(ids), GL.GL_UNSIGNED_INT, ids)
+
+        if self.overlays:
+            # 独立高亮层复用原始位置 VBO；只提交选中点的 original_point_id。
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.position_vbo)
+            GL.glVertexPointer(3, GL.GL_FLOAT, stride, None)
+            GL.glDisableClientState(GL.GL_COLOR_ARRAY)
+            GL.glPushAttrib(GL.GL_ENABLE_BIT | GL.GL_CURRENT_BIT | GL.GL_POINT_BIT | GL.GL_DEPTH_BUFFER_BIT)
+            GL.glDisable(GL.GL_DEPTH_TEST); GL.glDepthMask(False)
+            GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, 0)
+            GL.glPointSize(self.point_size+1)
+            for ids, color in self.overlays:
+                GL.glColor3f(*color)
+                GL.glDrawElements(GL.GL_POINTS, len(ids), GL.GL_UNSIGNED_INT, ids)
+            GL.glPopAttrib()
 
         GL.glDisableClientState(GL.GL_VERTEX_ARRAY)
         GL.glDisableClientState(GL.GL_COLOR_ARRAY)
@@ -378,8 +539,9 @@ class PointCloud(object):
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
 
     def reset_perspective(self) -> None:
-        self.trans_x, self.trans_y, self.trans_z = self.init_rotation
+        self.trans_x, self.trans_y, self.trans_z = self.init_translation
         self.rot_x, self.rot_y, self.rot_z = self.init_rotation
+        self.orbit_pivot = self.default_orbit_pivot.copy()
 
     def get_filtered_pointcloud(
         self, indicies: npt.NDArray[np.bool_]
@@ -397,6 +559,8 @@ class PointCloud(object):
             points=points,
             colors=colors,
             segmentation_labels=labels,
+            original_center=self.original_center,
+            applied_scale=self.applied_scale,
             write_buffer=False,
         )
 

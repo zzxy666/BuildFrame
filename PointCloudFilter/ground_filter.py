@@ -26,6 +26,13 @@ class GroundFilter:
         
     def process(self, points):
         """处理点云，返回地面点标签"""
+        points = np.asarray(points)
+        if points.ndim != 2 or points.shape[1] < 3:
+            raise ValueError("points must be a non-empty Nx3 array")
+        if len(points) == 0:
+            return np.empty(0, dtype=np.int8)
+        if not np.isfinite(points[:, :3]).all():
+            raise ValueError("points contain NaN or infinite coordinates")
         # 1. 计算点云范围
         self._calculate_range(points)
         
@@ -49,8 +56,10 @@ class GroundFilter:
         self.max_x, self.max_y = np.max(points[:, 0]), np.max(points[:, 1])
         
         # 计算栅格行列数
-        self.cols = int(np.ceil((self.max_x - self.min_x) / self.pixel_size))
-        self.rows = int(np.ceil((self.max_y - self.min_y) / self.pixel_size))
+        if self.pixel_size <= 0:
+            raise ValueError("pixel_size must be greater than zero")
+        self.cols = max(1, int(np.ceil((self.max_x - self.min_x) / self.pixel_size)) + 1)
+        self.rows = max(1, int(np.ceil((self.max_y - self.min_y) / self.pixel_size)) + 1)
         
     def _create_elevation_grids(self, points):
         """创建高程栅格"""
@@ -129,7 +138,8 @@ class GroundFilter:
             for j in range(self.cols):
                 if self.ground_grid[i, j]:
                     for idx in self.grid_point_indices[i][j]:
-                        ground_labels[idx] = 2  # 地面点标记为2
+                        if idx >= 0:
+                            ground_labels[idx] = 2  # 地面点标记为2
         
         # 收集地面栅格中心点和对应高程
         ground_points = []
@@ -155,7 +165,12 @@ class GroundFilter:
                     center_y = self.min_y + (i + 0.5) * self.pixel_size
                     
                     # 寻找最近的k个地面栅格
-                    distances, indices = tree.query([center_x, center_y], k=self.k_neighbors)
+                    neighbor_count = min(self.k_neighbors, len(ground_points))
+                    distances, indices = tree.query(
+                        [center_x, center_y], k=neighbor_count
+                    )
+                    distances = np.atleast_1d(distances)
+                    indices = np.atleast_1d(indices)
                     
                     # 反距离权重插值
                     weights = 1.0 / (distances + 1e-6)
@@ -196,9 +211,9 @@ class GroundFilter:
             
             self.min_map[r, c] = nearest_value
             self.base_map[r, c] = nearest_value
-            self.real_map[r, c] = True
-            # 添加虚拟点索引(-1表示虚拟点)
-            self.grid_point_indices[r][c].append(-1)
+            # Keep the occupancy mask and point-index lists unchanged. Marking
+            # interpolated cells as real used to bridge disconnected regions
+            # and inserted -1, which accidentally classified the last point.
 
 def filter_and_visualize(input_path, output_dir=None):
     """处理LAS文件并可视化结果"""

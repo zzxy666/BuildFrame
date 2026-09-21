@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "buildframe-pointcloud"
+version = "0.2.0"
+description = "Desktop tool for annotating roof vertices and edges in urban point clouds"
+readme = "README.md"
+requires-python = ">=3.9,<3.12"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+  { name = "Zhikang Yin" },
+  { name = "Shaobo Xia" },
+]
+dependencies = [
+  "numpy>=1.21.6,<2.0.0",
+  "open3d>=0.18.0",
+  "PyOpenGL==3.1.7",
+  "PyOpenGL-accelerate==3.1.7",
+  "PyQt5==5.15.10",
+  "laspy>=2.5.0",
+  "lazrs>=0.5.0",
+  "scipy>=1.10.0",
+  "cloth-simulation-filter==1.1.7",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+]
+
+[project.scripts]
+buildframe = "labelCloud.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["labelCloud*", "PointCloudFilter*"]
+
+[tool.setuptools.package-data]
+labelCloud = [
+  "resources/*.ini",
+  "resources/*.txt",
+  "resources/icons/*",
+  "resources/interfaces/*.ui",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

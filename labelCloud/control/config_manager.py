@@ -1,11 +1,11 @@
 """Load configuration from .ini file."""
 
 import configparser
+import os
+import tempfile
+from importlib import resources
 from pathlib import Path
 from typing import List, Union
-
-import pkg_resources
-
 
 class ExtendedConfigParser(configparser.ConfigParser):
     """Extends the ConfigParser with the ability to read and parse lists.
@@ -33,7 +33,7 @@ class ExtendedConfigParser(configparser.ConfigParser):
 class ConfigManager(object):
     PATH_TO_CONFIG = Path.cwd().joinpath("config.ini")
     PATH_TO_DEFAULT_CONFIG = Path(
-        pkg_resources.resource_filename("labelCloud.resources", "default_config.ini")
+        str(resources.files("labelCloud.resources").joinpath("default_config.ini"))
     )
 
     def __init__(self) -> None:
@@ -47,8 +47,23 @@ class ConfigManager(object):
             self.config.read(ConfigManager.PATH_TO_DEFAULT_CONFIG)
 
     def write_into_file(self) -> None:
-        with ConfigManager.PATH_TO_CONFIG.open("w") as configfile:
-            self.config.write(configfile, space_around_delimiters=True)
+        # Commit settings only after the complete new file is safely written.
+        # Keep the existing platform encoding for compatibility with old INIs.
+        target = ConfigManager.PATH_TO_CONFIG
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", dir=target.parent, prefix=f".{target.name}.",
+                suffix=".tmp", delete=False,
+            ) as configfile:
+                temporary = Path(configfile.name)
+                self.config.write(configfile, space_around_delimiters=True)
+                configfile.flush()
+                os.fsync(configfile.fileno())
+            os.replace(temporary, target)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def reset_to_default(self) -> None:
         self.config.read(ConfigManager.PATH_TO_DEFAULT_CONFIG)

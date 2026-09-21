@@ -1,0 +1,10 @@
+name: buildframe
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - freeglut
+  - pip:
+      - -e .
+      - pytest>=7.4

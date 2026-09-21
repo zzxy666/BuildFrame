@@ -6,6 +6,10 @@ __pycache__/
 *.pyo
 *.pyd
 *.so
+*.egg-info/
+.pytest_cache/
+run.log
+*.roof.json
 
 # 虚拟环境
 env/

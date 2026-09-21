@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Change Settings</string>
+   <string>设置</string>
   </property>
   <layout class="QHBoxLayout" name="horizontalLayout">
    <item>
@@ -25,30 +25,30 @@
      <item row="1" column="1">
       <widget class="QLabel" name="label_pointcloudfolder">
        <property name="toolTip">
-        <string>Path to the folder that contains the point cloud files.</string>
+        <string>包含点云文件的文件夹路径。</string>
        </property>
        <property name="text">
-        <string>Point Cloud Folder</string>
+        <string>点云文件夹</string>
        </property>
       </widget>
      </item>
      <item row="10" column="1">
       <widget class="QLabel" name="label_backgroundcolor">
        <property name="toolTip">
-        <string>Background color of the point cloud viewer (rgb).</string>
+        <string>点云视图的背景颜色（R,G,B）。</string>
        </property>
        <property name="text">
-        <string>Background Color</string>
+        <string>背景颜色</string>
        </property>
       </widget>
      </item>
      <item row="6" column="1">
       <widget class="QLabel" name="label_standardzoom">
        <property name="toolTip">
-        <string>Standard step for zooming.</string>
+        <string>鼠标滚轮缩放时使用的标准步长。</string>
        </property>
        <property name="text">
-        <string>Standard Zoom Factor</string>
+        <string>缩放步长</string>
        </property>
       </widget>
      </item>
@@ -64,14 +64,14 @@
         <string notr="true">margin-top: 10px</string>
        </property>
        <property name="text">
-        <string>User Interface</string>
+        <string>界面设置</string>
        </property>
       </widget>
      </item>
      <item row="4" column="2">
       <widget class="QDoubleSpinBox" name="doubleSpinBox_pointsize">
        <property name="toolTip">
-        <string>Rasterized diameter of each point from the point cloud.</string>
+        <string>点云中每个点在屏幕上的显示直径。</string>
        </property>
        <property name="decimals">
         <number>2</number>
@@ -84,31 +84,31 @@
      <item row="7" column="2">
       <widget class="QLineEdit" name="lineEdit_pointcolor">
        <property name="toolTip">
-        <string>Point color for colorless point clouds (r,g,b).</string>
+        <string>无颜色点云使用的点颜色（R,G,B）。</string>
        </property>
       </widget>
      </item>
      <item row="1" column="2">
       <widget class="QLineEdit" name="lineEdit_pointcloudfolder">
        <property name="toolTip">
-        <string>Path to the folder that contains the point cloud files.</string>
+        <string>包含点云文件的文件夹路径。</string>
        </property>
       </widget>
      </item>
      <item row="8" column="1" colspan="2">
       <widget class="QCheckBox" name="checkBox_colorizecolorless">
        <property name="toolTip">
-        <string>Colerize colorless point clouds by height value.</string>
+        <string>根据高度为无颜色点云着色。</string>
        </property>
        <property name="text">
-        <string>Colorize colorless point clouds by height</string>
+        <string>按高度为无颜色点云着色</string>
        </property>
       </widget>
      </item>
      <item row="6" column="2">
       <widget class="QDoubleSpinBox" name="doubleSpinBox_standardzoom">
        <property name="toolTip">
-        <string>Standard step for zooming.</string>
+        <string>鼠标滚轮缩放时使用的标准步长。</string>
        </property>
        <property name="decimals">
         <number>4</number>
@@ -121,10 +121,10 @@
      <item row="4" column="1">
       <widget class="QLabel" name="label_pointsize">
        <property name="toolTip">
-        <string>Rasterized diameter of each point from the point cloud.</string>
+        <string>点云中每个点在屏幕上的显示直径。</string>
        </property>
        <property name="text">
-        <string>Point Size</string>
+        <string>点大小</string>
        </property>
       </widget>
      </item>
@@ -136,8 +136,14 @@
          <verstretch>0</verstretch>
         </sizepolicy>
        </property>
+       <property name="minimumSize">
+        <size>
+         <width>130</width>
+         <height>0</height>
+        </size>
+       </property>
        <property name="text">
-        <string>Reset to Default</string>
+        <string>恢复默认设置</string>
        </property>
       </widget>
      </item>
@@ -157,7 +163,7 @@
      <item row="2" column="2">
       <widget class="QLineEdit" name="lineEdit_labelfolder">
        <property name="toolTip">
-        <string>Path to the folder where the label files will be saved.</string>
+        <string>保存标注文件的文件夹路径。</string>
        </property>
       </widget>
      </item>
@@ -176,14 +182,14 @@
         </font>
        </property>
        <property name="text">
-        <string>File Settings</string>
+        <string>文件设置</string>
        </property>
       </widget>
      </item>
      <item row="14" column="2">
       <widget class="QDialogButtonBox" name="buttonBox">
        <property name="locale">
-        <locale language="English" country="UnitedStates"/>
+        <locale language="Chinese" country="China"/>
        </property>
        <property name="orientation">
         <enum>Qt::Horizontal</enum>
@@ -196,27 +202,44 @@
      <item row="10" column="2">
       <widget class="QLineEdit" name="lineEdit_backgroundcolor">
        <property name="toolTip">
-        <string>Background color of the point cloud viewer (rgb).</string>
+        <string>点云视图的背景颜色（R,G,B）。</string>
        </property>
       </widget>
      </item>
      <item row="2" column="1">
       <widget class="QLabel" name="label_labelfolder">
        <property name="toolTip">
-        <string>Path to the folder where the label files will be saved.</string>
+        <string>保存标注文件的文件夹路径。</string>
        </property>
        <property name="text">
-        <string>Label Folder</string>
+        <string>标注文件夹</string>
        </property>
       </widget>
      </item>
      <item row="11" column="1" colspan="2">
       <widget class="QCheckBox" name="checkBox_showfloor">
        <property name="toolTip">
-        <string>Visualizes the pointcloud floor (x-y-plane) as a grid.</string>
+        <string>以网格形式显示点云的 X-Y 地面平面。</string>
        </property>
        <property name="text">
-        <string>Show Point Cloud Floor (x-y-Plane)</string>
+        <string>显示点云地面网格（X-Y 平面）</string>
+       </property>
+      </widget>
+     </item>
+     <item row="12" column="1">
+      <widget class="QLabel" name="label_language">
+       <property name="toolTip">
+        <string>选择界面、状态提示和弹窗使用的语言。</string>
+       </property>
+       <property name="text">
+        <string>界面语言</string>
+       </property>
+      </widget>
+     </item>
+     <item row="12" column="2">
+      <widget class="QComboBox" name="comboBox_language">
+       <property name="toolTip">
+        <string>选择界面、状态提示和弹窗使用的语言。</string>
        </property>
       </widget>
      </item>
@@ -228,18 +251,18 @@
         </font>
        </property>
        <property name="text">
-        <string>Note: Some settings might require a restart to take effect!</string>
+        <string>提示：部分设置需要重启程序后才能生效。</string>
        </property>
       </widget>
      </item>
      <item row="7" column="1">
       <widget class="QLabel" name="label_pointcolor">
        <property name="toolTip">
-        <string>Point color for colorless point clouds (r,g,b).</string>
+        <string>无颜色点云使用的点颜色（R,G,B）。</string>
        </property>
        <property name="text">
-        <string>Point Color
-(for colorless point clouds)</string>
+        <string>点颜色
+（用于无颜色点云）</string>
        </property>
       </widget>
      </item>
@@ -261,24 +284,24 @@
         <string notr="true">margin-top: 10px</string>
        </property>
        <property name="text">
-        <string>Point Cloud Settings</string>
+        <string>点云设置</string>
        </property>
       </widget>
      </item>
      <item row="5" column="1">
       <widget class="QLabel" name="label_standardtranslation">
        <property name="toolTip">
-        <string>Standard step for point cloud translation.</string>
+        <string>平移点云时使用的标准步长。</string>
        </property>
        <property name="text">
-        <string>Standard Translation</string>
+        <string>平移步长</string>
        </property>
       </widget>
      </item>
      <item row="5" column="2">
       <widget class="QDoubleSpinBox" name="doubleSpinBox_standardtranslation">
        <property name="toolTip">
-        <string>Standard step for point cloud translation.</string>
+        <string>平移点云时使用的标准步长。</string>
        </property>
        <property name="decimals">
         <number>4</number>

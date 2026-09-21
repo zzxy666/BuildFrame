@@ -1,24 +1,20 @@
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
-from PyQt5 import QtGui
+from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import QPoint
 from PyQt5.QtCore import Qt as Keys
 
-#from ..definitions import LabelingMode
-#from ..io.labels.config import LabelConfig
-from ..utils import oglhelper
-from ..view.gui import GUI
-#from .alignmode import AlignMode
-#from .bbox_controller import BoundingBoxController
-from .config_manager import config
-#from .drawing_manager import DrawingManager
 from .pcd_manager import PointCloudManger
-from .roof_drawing_manager import RoofDrawingManager
-from PyQt5 import QtGui,QtWidgets,QtCore
-from PointCloudFilter.ground_filter import GroundFilter
+from .annotation_controller import RoofAnnotationController
+from .config_manager import config
+from .filter_controller import PointCloudFilterController
+from .navigation_controller import NavigationController
+from .roof_plane_controller import RoofPlaneController
 
+if TYPE_CHECKING:
+    from ..view.gui import GUI
 
 
 class Controller:
@@ -33,7 +29,9 @@ class Controller:
         # Drawing states
         #self.drawing_mode = DrawingManager(self.bbox_controller)
         #self.align_mode = AlignMode(self.pcd_manager)
-        self.roof_drawing_manager = RoofDrawingManager(self)
+        self.annotation_controller = RoofAnnotationController(self)
+        self.roof_drawing_manager = self.annotation_controller.manager
+        self.navigation_controller = NavigationController(self.pcd_manager)
 
 
         # Control states
@@ -46,8 +44,8 @@ class Controller:
         self.roof_drawing_active = False #屋顶绘制模式的开关
         self.roof_drawing_mode = None  # 可取 'point', 'line', 或 None
 
-        self.ground_filter = GroundFilter()
-        self.is_filtered = False
+        self.filter_controller = PointCloudFilterController(self)
+        self.roof_plane_controller = RoofPlaneController(self)
 
 
 
@@ -58,7 +56,10 @@ class Controller:
     def startup(self, view: "GUI") -> None:
         """Sets the view in all controllers and dependent modules; Loads labels from file."""
         self.view = view
-        self.roof_drawing_manager.set_view(self.view)
+        self.annotation_controller.set_view(self.view)
+        self.filter_controller.set_view(self.view)
+        self.navigation_controller.set_view(self.view)
+        self.roof_plane_controller.set_view(self.view)
         self.view.gl_widget.roof_drawing_manager = self.roof_drawing_manager
         #self.bbox_controller.set_view(self.view)
         self.pcd_manager.set_view(self.view)
@@ -73,20 +74,26 @@ class Controller:
 
     def loop_gui(self) -> None:
         """Function collection called during each event loop iteration."""
-        self.set_crosshair()
+        if self.roof_plane_controller.active:
+            return  # Roof Plane 按交互事件重绘，空闲时不反复绘制千万点。
+        if self.pcd_manager.pointcloud is not None:
+            self.set_crosshair()
         #self.set_selected_side()
         self.view.gl_widget.updateGL()
 
     # POINT CLOUD METHODS
     def next_pcd(self, save: bool = True) -> None:
-        if save:
-            self.save()
+        if save and not self.save():
+            return
         if self.pcd_manager.pcds_left():
             #previous_bboxes = self.bbox_controller.bboxes
             self.pcd_manager.get_next_pcd()
+            self.filter_controller.reset_for_pointcloud()
             self.reset()
             self.reset_roof_drawing()
             self.load_roof_annotation()
+            self.roof_plane_controller.on_pointcloud_changed()
+            self.view.button_point_cloud_filtering.setEnabled(not self.roof_plane_controller.active)
             # self.bbox_controller.set_bboxes(self.pcd_manager.get_labels_from_file())
 
             # if not self.bbox_controller.bboxes and config.getboolean(
@@ -99,47 +106,35 @@ class Controller:
             self.view.button_next_pcd.setEnabled(False)
 
     def prev_pcd(self) -> None:
-        self.save()
+        if not self.save():
+            return
         if self.pcd_manager.current_id > 0:
             self.pcd_manager.get_prev_pcd()
+            self.filter_controller.reset_for_pointcloud()
             self.reset()
             self.reset_roof_drawing()
             self.load_roof_annotation()
+            self.roof_plane_controller.on_pointcloud_changed()
+            self.view.button_point_cloud_filtering.setEnabled(not self.roof_plane_controller.active)
             #self.bbox_controller.set_bboxes(self.pcd_manager.get_labels_from_file())
             #self.bbox_controller.set_active_bbox(0)
 
     def custom_pcd(self, custom: int) -> None:
-        self.save()
+        if not self.save():
+            return
         self.pcd_manager.get_custom_pcd(custom)
+        self.filter_controller.reset_for_pointcloud()
         self.reset()
         self.reset_roof_drawing()
         self.load_roof_annotation()
+        self.roof_plane_controller.on_pointcloud_changed()
+        self.view.button_point_cloud_filtering.setEnabled(not self.roof_plane_controller.active)
         #self.bbox_controller.set_bboxes(self.pcd_manager.get_labels_from_file())
 
     # CONTROL METHODS
-    def save(self) -> None:
-        """Saves all bounding boxes and optionally segmentation labels in the label file."""
-        #self.pcd_manager.save_labels_into_file(self.bbox_controller.bboxes)
-
-        # if LabelConfig().type == LabelingMode.SEMANTIC_SEGMENTATION:
-        #     assert self.pcd_manager.pointcloud is not None
-        #     self.pcd_manager.pointcloud.save_segmentation_labels()
-        """只保存屋顶标注（不再保存 Bbox）"""
-        if not self.pcd_manager.pcds or self.pcd_manager.current_id < 0:
-            return
-        if (self.roof_drawing_manager.vertices or 
-            self.roof_drawing_manager.lines or 
-            self.roof_drawing_manager.temp_points):
-            
-            pcd_path = self.pcd_manager.pcd_path
-            roof_obj_path = pcd_path.with_suffix('.roof.obj')
-            roof_obj_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            try:
-                self.roof_drawing_manager.save_to_obj(str(roof_obj_path))
-                print(f"[RoofDrawing] 屋顶标注已自动保存到: {roof_obj_path}")
-            except Exception as e:
-                print(f"[RoofDrawing] 保存屋顶标注失败: {e}")
+    def save(self, force_plane=False) -> bool:
+        """两种标注分别保存；失败时禁止导航继续丢弃当前状态。"""
+        return self.annotation_controller.save() and self.roof_plane_controller.save(force=force_plane)
 
     def reset(self) -> None:
         """Resets the controllers and bounding boxes from the current screen."""
@@ -193,6 +188,8 @@ class Controller:
     # EVENT PROCESSING
     def mouse_clicked(self, a0: QtGui.QMouseEvent) -> None:
         """Triggers actions when the user clicks the mouse."""
+        if self.roof_plane_controller.active:
+            return
         print("Mouse clicked at:", a0.pos())
         self.last_cursor_pos = a0.pos()
 
@@ -245,6 +242,17 @@ class Controller:
     # 鼠标按下事件
     def mouse_pressed(self, event: QtGui.QMouseEvent):
         self.mouse_press_pos = event.pos()
+        self.last_cursor_pos = event.pos()
+        if (
+            event.button() == Keys.LeftButton
+            and self.roof_drawing_mode is None
+            and not self.roof_drawing_manager.connect_mode
+            and config.getboolean(
+                "USER_INTERFACE", "auto_pick_rotation_center", fallback=True
+            )
+        ):
+            pivot = self.view.gl_widget.pick_surface_point(event.x(), event.y())
+            self.navigation_controller.set_orbit_pivot(pivot)
     # 鼠标释放事件
     def mouse_released(self, event: QtGui.QMouseEvent):
         if self.mouse_press_pos is None:
@@ -258,9 +266,12 @@ class Controller:
         else:
             print("Mouse drag detected — ignore click.")
 
-    # def mouse_double_clicked(self, a0: QtGui.QMouseEvent) -> None:
-    #     """Triggers actions when the user double clicks the mouse."""
-    #     self.bbox_controller.select_bbox_by_ray(a0.x(), a0.y())
+    def mouse_double_clicked(self, event: QtGui.QMouseEvent) -> None:
+        """Explicitly set the orbit pivot, following CloudCompare-style UX."""
+        if event.button() != Keys.LeftButton or self.roof_drawing_mode is not None:
+            return
+        pivot = self.view.gl_widget.pick_surface_point(event.x(), event.y())
+        self.navigation_controller.set_orbit_pivot(pivot)
 
     def mouse_move_event(self, a0: QtGui.QMouseEvent) -> None:
         """Triggers actions when the user moves the mouse."""
@@ -269,7 +280,8 @@ class Controller:
             world_pos = self.view.gl_widget.get_world_coords(a0.x(), a0.y(), correction=True)
             self.roof_drawing_manager.update_preview(world_pos)
         
-        self.view.gl_widget.updateGL()
+        if not self.roof_plane_controller.active:
+            self.view.gl_widget.updateGL()
 
         self.curr_cursor_pos = a0.pos()  # Updates the current mouse cursor position
 
@@ -305,11 +317,9 @@ class Controller:
                 #     self.bbox_controller.set_center(*new_center)  # absolute positioning
             else:
                 if a0.buttons() & Keys.LeftButton:  # pcd rotation
-                    self.pcd_manager.rotate_around_x(dy)
-                    self.pcd_manager.rotate_around_z(dx)
+                    self.navigation_controller.rotate(dx, dy)
                 elif a0.buttons() & Keys.RightButton:  # pcd translation
-                    self.pcd_manager.translate_along_x(dx)
-                    self.pcd_manager.translate_along_y(dy)
+                    self.navigation_controller.translate(dx, dy)
 
             # Reset scroll locks of "side scrolling" for significant cursor movements
             if dx > Controller.MOVEMENT_THRESHOLD or dy > Controller.MOVEMENT_THRESHOLD:
@@ -318,6 +328,8 @@ class Controller:
                 else:
                     self.scroll_mode = False
         self.last_cursor_pos = a0.pos()
+        if self.roof_plane_controller.active:
+            self.view.gl_widget.update()  # 相机变换完成后按事件绘制，不依赖空闲计时器。
 
         
 
@@ -337,8 +349,17 @@ class Controller:
         #         self.selected_side, -a0.angleDelta().y() / 4000  # type: ignore
         #     )  # ToDo implement method
         else:
-            self.pcd_manager.zoom_into(a0.angleDelta().y())
+            focus_point = None
+            if config.getboolean(
+                "USER_INTERFACE", "zoom_to_cursor", fallback=True
+            ):
+                focus_point = self.view.gl_widget.pick_surface_point(
+                    a0.position().x(), a0.position().y()
+                )
+            self.navigation_controller.zoom(a0.angleDelta().y(), focus_point)
             self.scroll_mode = True
+            if self.roof_plane_controller.active:
+                self.view.gl_widget.update()
 
     def key_press_event(self, a0: QtGui.QKeyEvent) -> None:
         """Triggers actions when the user presses a key."""
@@ -358,6 +379,7 @@ class Controller:
         # Reset point cloud pose to intial rotation and translation
         elif a0.key() in [Keys.Key_P, Keys.Key_Home]:
             self.pcd_manager.reset_transformations()
+            self.navigation_controller.reset_orbit_pivot()
             logging.info("Reseted position to default.")
 
         # elif a0.key() == Keys.Key_Delete:  # Delete active bbox
@@ -548,18 +570,11 @@ class Controller:
                 mgr.active_vertex_index = index
 
                 # 计算并显示真实世界坐标（考虑点云的缩放和平移）
-                nx, ny, nz = mgr.vertices[index]
-                center = self.pcd_manager.pointcloud.last_center
-                scale = self.pcd_manager.pointcloud.last_scale
+                x, y, z = self.pcd_manager.pointcloud.to_world_coordinates(
+                    mgr.vertices[index]
+                )
 
-                x = nx * scale + center[0]
-                y = ny * scale + center[1]
-                z = nz * scale + center[2]
-
-                # 更新上方 Current Vertex 的坐标框
-                self.view.current_pt_x.setText(f"{x:.3f}")
-                self.view.current_pt_y.setText(f"{y:.3f}")
-                self.view.current_pt_z.setText(f"{z:.3f}")
+                self.view.show_vertex_coordinates((x, y, z))
 
                 print(f"选中点 {text}: ({x:.3f}, {y:.3f}, {z:.3f})")
         except:
@@ -605,22 +620,16 @@ class Controller:
                 # 显示线的两个端点坐标
                 (x1, y1, z1), (x2, y2, z2) = mgr.lines[index]["coord"]
 
-                center = self.pcd_manager.pointcloud.last_center
-                scale = self.pcd_manager.pointcloud.last_scale
+                wx1, wy1, wz1 = self.pcd_manager.pointcloud.to_world_coordinates(
+                    (x1, y1, z1)
+                )
+                wx2, wy2, wz2 = self.pcd_manager.pointcloud.to_world_coordinates(
+                    (x2, y2, z2)
+                )
 
-                wx1 = x1 * scale + center[0]
-                wy1 = y1 * scale + center[1]
-                wz1 = z1 * scale + center[2]
-                wx2 = x2 * scale + center[0]
-                wy2 = y2 * scale + center[1]
-                wz2 = z2 * scale + center[2]
-
-                self.view.start_pt_x.setText(f"{wx1:.3f}")
-                self.view.end_pt_x.setText(f"{wx2:.3f}")
-                self.view.start_pt_y.setText(f"{wy1:.3f}")
-                self.view.end_pt_y.setText(f"{wy2:.3f}")
-                self.view.start_pt_z.setText(f"{wz1:.3f}")
-                self.view.end_pt_z.setText(f"{wz2:.3f}")
+                self.view.show_line_coordinates(
+                    (wx1, wy1, wz1), (wx2, wy2, wz2)
+                )
 
                 print(f"选中线 {text}: 从 ({wx1:.3f},{wy1:.3f},{wz1:.3f}) 到 ({wx2:.3f},{wy2:.3f},{wz2:.3f})")
         except:
@@ -687,56 +696,24 @@ class Controller:
         item = selected_items[0]
         text = item.text()
 
+        try:
+            index = int(text.replace("Vertex", "").replace("Edge", "")) - 1
+        except ValueError:
+            return
+
         deleted = False
-
         if text.startswith("Vertex"):
-            # --- 删除点 ---
-            try:
-                index = int(text.replace("Vertex", "")) - 1
-                if 0 <= index < len(mgr.vertices):
-                    deleted_pt = mgr.vertices.pop(index)
-                    mgr.vertex_info.pop(index)
-
-                    # 删除所有包含这个点的线段
-                    lines_to_remove = []
-                    for i, line in enumerate(mgr.lines):
-                        if np.all(np.isclose(line["coord"][0], deleted_pt, atol=1e-5)) or \
-                           np.all(np.isclose(line["coord"][1], deleted_pt, atol=1e-5)):
-                            lines_to_remove.append(i)
-
-                    # 从后往前删除，避免索引错乱
-                    for i in sorted(lines_to_remove, reverse=True):
-                        del mgr.lines[i]
-
-                    print(f"[RoofDrawing] 已删除点 Vertex{index+1} 和相关 {len(lines_to_remove)} 条线")
-                    deleted = True
-            except Exception as e:
-                print("删除点失败:", e)
-
+            removed_edges = mgr.delete_vertex(index)
+            deleted = removed_edges is not None
+            if deleted:
+                print(
+                    f"[RoofDrawing] 已删除点 Vertex{index + 1} "
+                    f"和相关 {removed_edges} 条线"
+                )
         elif text.startswith("Edge"):
-            # --- 删除线 ---
-            try:
-                index = int(text.replace("Edge", "")) - 1
-                if 0 <= index < len(mgr.lines):
-                    del mgr.lines[index]
-                    print(f"[RoofDrawing] 已删除线 Edge{index+1}")
-                    deleted = True
-            except Exception as e:
-                print("删除线失败:", e)
+            deleted = mgr.delete_edge(index)
 
         if deleted:
-            # 重置选中状态
-            mgr.active_vertex_index = None
-            mgr.active_line_index = None
-            mgr.active_line_start_idx = None
-            mgr.active_line_end_idx = None
-
-            # 重新编号（可选：让名字从1开始连续）
-            for i, info in enumerate(mgr.vertex_info):
-                info["name"] = f"Vertex{i+1}"
-            for i, line in enumerate(mgr.lines):
-                line["name"] = f"Edge{i+1}"
-
             # 刷新右侧列表和画面
             self.update_point_list()
             if self.view and self.view.gl_widget:
@@ -746,66 +723,12 @@ class Controller:
             self.save()
 
     def filter_pointcloud(self):
-        pc = self.pcd_manager.pointcloud
-
-        # --- 如果已滤波 → 还原 ---
-        if self.is_filtered:
-            pc.points = pc.backup_points.copy()
-            pc.colors = pc.backup_colors.copy()
-
-            del pc.backup_points
-            del pc.backup_colors
-
-            self.is_filtered = False
-            self.view.button_point_cloud_filtering.setText("Filter")
-
-            pc.create_buffers()
-            self.view.gl_widget.update()
-            return
-
-        # --- 未滤波 → 开始滤波 ---
-        points = pc.points
-        if points is None or len(points) == 0:
-            logging.error("No points loaded.")
-            return
-
-        # 保存原始点云数据
-        pc.backup_points = pc.points.copy()
-        pc.backup_colors = pc.colors.copy()
-
-        # 调用 GroundFilter
-        ground_labels = self.ground_filter.process(points)
-
-        # 设置颜色：绿色=地面 红色=非地面
-        colors = np.zeros_like(points)
-        colors[ground_labels == 2] = [0.0, 1.0, 0.0]  # 绿色 ground
-        colors[ground_labels == 1] = [1.0, 0.0, 0.0]  # 红色 non-ground
-
-        pc.colors = colors
-
-        # 更新 OpenGL buffer
-        pc.create_buffers()
-
-        self.is_filtered = True
-        self.view.button_point_cloud_filtering.setText("Restore")
-
-        # 刷新
-        self.view.gl_widget.update()
+        self.filter_controller.toggle()
 
     def reset_roof_drawing(self):
         """清空当前屋顶标注（切换点云时调用）"""
         if hasattr(self, 'roof_drawing_manager'):
-            self.roof_drawing_manager.vertices.clear()
-            self.roof_drawing_manager.vertex_info.clear()
-            self.roof_drawing_manager.lines.clear()
-            self.roof_drawing_manager.temp_points.clear()
-            self.roof_drawing_manager.preview_point = None
-            self.roof_drawing_manager.preview_line = None
-            self.roof_drawing_manager.closed = False
-            self.roof_drawing_manager.active_vertex_index = None
-            self.roof_drawing_manager.active_line_index = None
-            self.roof_drawing_manager.reset_temp_state()
-            self.roof_drawing_manager.mode = "point"  # 可以默认回到点模式
+            self.annotation_controller.reset()
 
             # 同时清空右侧列表
             self.update_point_list()
@@ -819,19 +742,13 @@ class Controller:
         if not hasattr(self, 'roof_drawing_manager'):
             return
 
-        # 约定：屋顶标注文件名为 原文件名 + .roof.obj
-        # 例如：123.pcd → 123.roof.obj
-        pcd_path = self.pcd_manager.pcd_path
-        obj_path = pcd_path.with_suffix('.roof.obj')  # 替换后缀
-
-        if obj_path.exists():
-            self.roof_drawing_manager.load_from_obj(str(obj_path))
+        if not self.annotation_controller.load():
             self.update_point_list()
-            if self.view and self.view.gl_widget:
-                self.view.gl_widget.update()
-        else:
-            # 没有标注文件 → 清空
-            self.reset_roof_drawing()
+            return
+
+        self.update_point_list()
+        if self.view and self.view.gl_widget:
+            self.view.gl_widget.update()
 
     def move_active_vertex(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0):
         """移动当前选中的顶点（核心方法）"""
@@ -844,23 +761,7 @@ class Controller:
         if idx >= len(mgr.vertices):
             return
 
-        old_pos = np.array(mgr.vertices[idx])
-        new_pos_np = old_pos + np.array([dx, dy, dz])
-
-        # === 关键修改：微调时不再吸附到点云点，直接使用偏移后的坐标 ===
-        new_pos_tuple = tuple(new_pos_np)
-
-        # 更新 vertices 和 vertex_info
-        mgr.vertices[idx] = new_pos_tuple
-        mgr.vertex_info[idx]["coord"] = new_pos_tuple
-
-        # 同步更新所有关联的线段
-        for line in mgr.lines:
-            c1, c2 = line["coord"]
-            if np.allclose(c1, old_pos, atol=1e-6):
-                line["coord"] = (new_pos_tuple, c2)
-            if np.allclose(c2, old_pos, atol=1e-6):
-                line["coord"] = (c1, new_pos_tuple)
+        new_pos_tuple = mgr.move_vertex(idx, (dx, dy, dz))
 
         print(f"[RoofDrawing] 顶点 {idx+1} 已微调 → {new_pos_tuple}")
 
@@ -934,60 +835,14 @@ class Controller:
         self.view.gl_widget.updateGL()
 
     def set_standard_view(self, view_name: str):
-        """切换到标准正交视角，并自动调整相机距离以完整显示点云"""
-        if not self.pcd_manager.pointcloud:
+        if self.roof_plane_controller.active and self.pcd_manager.pointcloud is not None:
+            # 大场景只切换观察方向，保留当前局部旋转中心和缩放。
+            rotation = self.navigation_controller.STANDARD_ROTATIONS[view_name]
+            self.pcd_manager.pointcloud.set_rotations(*rotation)
+            self.roof_plane_controller.cancel_gesture()
+            self.view.gl_widget.update()
             return
-
-        pc = self.pcd_manager.pointcloud
-        
-        # 1. 先重置旋转，但不要重置平移（避免拉太远）
-        pc.rot_x, pc.rot_y, pc.rot_z = 0, 0, 0
-        
-        # 2. 设置目标旋转角度
-        if view_name == "top":      # 上视图（最常用，屋顶平面）
-            pc.set_rot_x(0)
-            pc.set_rot_y(0)
-            pc.set_rot_z(0)
-        
-        elif view_name == "bottom": # 下视图（翻转，避免倒置）
-            pc.set_rot_x(0)
-            pc.set_rot_y(180)
-            pc.set_rot_z(180)   # 改成180而不是-90，更稳定
-        
-        elif view_name == "front":  # 前视图（正Y方向）
-            pc.set_rot_x(-90)
-            pc.set_rot_y(0)
-            pc.set_rot_z(0)
-        
-        elif view_name == "back":   # 后视图
-            pc.set_rot_x(-90)
-            pc.set_rot_y(0)
-            pc.set_rot_z(180)
-        
-        elif view_name == "left":   # 左视图
-            pc.set_rot_x(-90)
-            pc.set_rot_y(0)
-            pc.set_rot_z(90)
-        
-        elif view_name == "right":  # 右视图
-            pc.set_rot_x(-90)
-            pc.set_rot_y(0)
-            pc.set_rot_z(-90)   # 保持-90（取模后270，但OpenGL处理正常）
-        
-        # 3. 关键修复：重新计算并设置合适的相机距离（zoom）
-        # 计算点云对角线长度作为参考距离
-        extents = np.linalg.norm(pc.pcd_maxs - pc.pcd_mins)
-        zoom_distance = -extents * 2.0  # 乘2~3倍系数，确保完整显示（可根据需要调大）
-        
-        # 只重设Z距离（拉近相机），保留X/Y偏移（如果用户手动平移过）
-        pc.set_trans_z(zoom_distance)
-        
-        # 可选：如果想完全居中，也可以重设X/Y
-        # pc.set_trans_x(0)
-        # pc.set_trans_y(0)
-        
-        # 4. 刷新显示
-        self.view.gl_widget.updateGL()
+        self.navigation_controller.set_standard_view(view_name)
     
     def activate_connect_mode(self, enabled: bool):
         """激活或关闭连接两点模式"""

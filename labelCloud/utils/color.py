@@ -1,9 +1,9 @@
 import colorsys
+from importlib import resources
 from typing import List
 
 import numpy as np
 import numpy.typing as npt
-import pkg_resources
 
 from ..definitions.types import Color3f
 
@@ -35,12 +35,16 @@ def get_distinct_colors(n: int) -> List[str]:
 def colorize_points_with_height(
     points: np.ndarray, z_min: float, z_max: float
 ) -> npt.NDArray[np.float32]:
-    palette = np.loadtxt(
-        pkg_resources.resource_filename("labelCloud.resources", "rocket-palette.txt")
+    palette_path = resources.files("labelCloud.resources").joinpath(
+        "rocket-palette.txt"
     )
+    palette = np.loadtxt(str(palette_path))
     palette_len = len(palette) - 1
 
     colors = np.zeros(points.shape)
+    if z_max == z_min:
+        colors[:] = palette[palette_len // 2]
+        return colors.astype(np.float32)
     for ind, height in enumerate(points[:, 2]):
         colors[ind] = palette[round((height - z_min) / (z_max - z_min) * palette_len)]
     return colors.astype(np.float32)

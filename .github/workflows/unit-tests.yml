@@ -1,37 +1,25 @@
-name: Unit Tests
+name: Tests
 on: [push, pull_request]
 
 jobs:
-
   testing:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]  # macos-latest has OpenGL import error
-        python-version: ["3.8", "3.9"]  # "3.10" wait for Open3D support
-
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.11"]
     steps:
-    - name: Get repository
-      uses: actions/checkout@v3
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip setuptools wheel
-        pip install -r requirements.txt
-
-    - name: Check black formatting
-      uses: psf/black@stable
-
-    - name: Lint with mypy
-      if: ${{ matrix.python-version == '3.9' }}  # only lint last Python version
-      run: |
-        mypy labelCloud/.
-
-    - name: Test with pytest
-      run: |
-        python -m pytest labelCloud/tests/unit/
+      - name: Get repository
+        uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Compile and test
+        run: |
+          python -m compileall -q labelCloud PointCloudFilter
+          python -m pytest

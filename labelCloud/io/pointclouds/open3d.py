@@ -22,7 +22,9 @@ class Open3DHandler(BasePointCloudHandler):
         pointcloud: o3d.geometry.PointCloud,
     ) -> Tuple[npt.NDArray, Optional[npt.NDArray]]:
         return (
-            np.asarray(pointcloud.points).astype("float32"),
+            # Center world coordinates before narrowing to GPU float32. Keeping
+            # double precision here preserves small ground-height differences.
+            np.asarray(pointcloud.points).copy(),
             np.asarray(pointcloud.colors).astype("float32"),
         )
 

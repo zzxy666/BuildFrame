@@ -1,10 +1,14 @@
 # roof_drawing_manager.py
 
+import json
 import logging
+import os
+import tempfile
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
+
 import numpy as np
 from scipy.spatial import cKDTree
-from typing import TYPE_CHECKING, List, Tuple
-import os
 
 if TYPE_CHECKING:
     from ..view.gui import GUI
@@ -38,6 +42,8 @@ class RoofDrawingManager:
 
         self.connect_mode = False
         self.connect_first_vertex_idx = None
+        self._point_tree: Optional[cKDTree] = None
+        self._point_tree_source_id: Optional[int] = None
 
 
     def set_view(self, view):
@@ -58,11 +64,12 @@ class RoofDrawingManager:
         self.reset_temp_state()  # 切换模式时清空临时点
         print(f"[RoofDrawing] {mode} mode ON")
 
-    def reset_temp_state(self):
+    def reset_temp_state(self, clear_closed: bool = True):
         self.temp_points.clear()
         self.preview_point = None
         self.preview_line = None
-        self.closed = False
+        if clear_closed:
+            self.closed = False
 
     def register_point(self, x: float, y: float, z: float):
         world_point = np.array([x, y, z])
@@ -81,8 +88,11 @@ class RoofDrawingManager:
         if len(pcd_points) == 0:
             return tuple(point)
 
-        tree = cKDTree(pcd_points)
-        dist, idx = tree.query(point, k=1)
+        source_id = id(pcd_points)
+        if self._point_tree is None or self._point_tree_source_id != source_id:
+            self._point_tree = cKDTree(pcd_points)
+            self._point_tree_source_id = source_id
+        dist, idx = self._point_tree.query(point, k=1)
         if dist < 5.0:  # 可调阈值
             return tuple(pcd_points[idx])
         return tuple(point)
@@ -95,7 +105,7 @@ class RoofDrawingManager:
 
     def _add_line_point(self, p):
         if self.closed:
-            return
+            self.closed = False
 
         self.temp_points.append(p)
 
@@ -110,8 +120,15 @@ class RoofDrawingManager:
         # 当添加第N个点（N>=3）且当前点离第一个点足够近 → 自动闭合
 
         if len(self.temp_points) >= 3 and self._near(p, self.temp_points[0]):
+            # Use exactly the first point so the graph is topologically closed,
+            # instead of merely looking closed within a distance threshold.
+            self.temp_points[-1] = self.temp_points[0]
+            self.lines[-1]["coord"] = (
+                self.lines[-1]["coord"][0],
+                self.temp_points[0],
+            )
             self.closed = True
-            for i, pt in enumerate(self.temp_points):
+            for pt in self.temp_points[:-1]:
                 name = f"Vertex{len(self.vertices) + 1}"
                 self.vertices.append(pt)
                 self.vertex_info.append({"name": name, "coord": pt})
@@ -119,7 +136,7 @@ class RoofDrawingManager:
             if self.controller:
                 self.controller.update_point_list()
 
-            self.reset_temp_state()
+            self.reset_temp_state(clear_closed=False)
             print("[RoofDrawing] 多边形自动闭合，点和线已更新到右侧列表")
 
     def close_polygon_manually(self):
@@ -145,7 +162,7 @@ class RoofDrawingManager:
             self.controller.update_point_list()
 
         # 重置临时状态
-        self.reset_temp_state()
+        self.reset_temp_state(clear_closed=False)
 
         print("[RoofDrawing] 多边形已手动闭合，点已显示在右侧")
 
@@ -165,34 +182,114 @@ class RoofDrawingManager:
         self.preview_point = None
         self.preview_line = None
 
-    def save_to_obj(self, filepath: str):
-        """保存为 OBJ 文件（顶点 + 线）"""
-        with open(filepath, 'w') as f:
-            # 收集所有唯一顶点
-            all_points = set()
-            for p in self.vertices:
-                all_points.add(p)
-            for line in self.lines:
-                all_points.add(line["coord"][0])
-                all_points.add(line["coord"][1])
+    @staticmethod
+    def _atomic_write(path: Path, writer: Callable) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+                writer(stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_name, path)
+        except Exception:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+            raise
 
-            # 写入顶点
-            vertex_map = {}
-            vertex_index = 1
-            for p in all_points:
-                f.write(f"v {p[0]:.6f} {p[1]:.6f} {p[2]:.6f}\n")
-                vertex_map[p] = vertex_index
-                vertex_index += 1
+    def _graph(self):
+        """Return deterministic vertices and edge indices for serialization."""
+        vertices = [tuple(map(float, point)) for point in self.vertices]
 
+        def index_for(point):
+            candidate = tuple(map(float, point))
+            for index, vertex in enumerate(vertices):
+                if np.allclose(vertex, candidate, atol=1e-7):
+                    return index
+            vertices.append(candidate)
+            return len(vertices) - 1
 
-            # 写入线元素
-            for line in self.lines:
-                p1, p2 = line["coord"]
-                if p1 in vertex_map and p2 in vertex_map:
-                    f.write(f"l {vertex_map[p1]} {vertex_map[p2]}\n")
+        edges = [
+            (index_for(line["coord"][0]), index_for(line["coord"][1]))
+            for line in self.lines
+        ]
+        return vertices, edges
+
+    def save_to_obj(self, filepath: str, pointcloud=None):
+        """Atomically export deterministic OBJ vertices/edges in world space."""
+        path = Path(filepath)
+        vertices, edges = self._graph()
+        if pointcloud is not None and vertices:
+            vertices = [
+                tuple(pointcloud.to_world_coordinates(vertex)) for vertex in vertices
+            ]
+
+        def write_obj(stream):
+            stream.write("# BuildFrame roof annotation (world coordinates)\n")
+            for point in vertices:
+                stream.write(f"v {point[0]:.9f} {point[1]:.9f} {point[2]:.9f}\n")
+            for start, end in edges:
+                stream.write(f"l {start + 1} {end + 1}\n")
+
+        self._atomic_write(path, write_obj)
+
+    def save_project(self, filepath: str, pointcloud) -> None:
+        """Save the versioned internal annotation format in world coordinates."""
+        path = Path(filepath)
+        vertices, edges = self._graph()
+        world_vertices = (
+            pointcloud.to_world_coordinates(vertices).tolist() if vertices else []
+        )
+        payload = {
+            "format": "buildframe-roof",
+            "version": 1,
+            "coordinate_space": "world",
+            "source": pointcloud.path.name,
+            "vertices": world_vertices,
+            "edges": [list(edge) for edge in edges],
+        }
+
+        def write_json(stream):
+            json.dump(payload, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+
+        self._atomic_write(path, write_json)
+
+    def load_project(self, filepath: str, pointcloud) -> None:
+        path = Path(filepath)
+        with path.open("r", encoding="utf-8") as stream:
+            payload = json.load(stream)
+        if payload.get("format") != "buildframe-roof" or payload.get("version") != 1:
+            raise ValueError(f"Unsupported BuildFrame annotation format: {path}")
+        world_vertices = np.asarray(payload.get("vertices", []), dtype=np.float64)
+        local_vertices = (
+            pointcloud.to_local_coordinates(world_vertices) if len(world_vertices) else []
+        )
+        self.vertices = [tuple(point) for point in local_vertices]
+        self.vertex_info = [
+            {"name": f"Vertex{i + 1}", "coord": point}
+            for i, point in enumerate(self.vertices)
+        ]
+        self.lines = []
+        for start, end in payload.get("edges", []):
+            if not (0 <= start < len(self.vertices) and 0 <= end < len(self.vertices)):
+                raise ValueError(f"Invalid edge ({start}, {end}) in {path}")
+            self.lines.append(
+                {
+                    "name": f"Edge{len(self.lines) + 1}",
+                    "coord": (self.vertices[start], self.vertices[end]),
+                }
+            )
+        self.reset_temp_state()
+        self._update_closed_state()
+        self.mode = "point"
     
-    def load_from_obj(self, filepath: str):
-        """从 OBJ 文件加载顶点和线（只加载 v 和 l 行）"""
+    def load_from_obj(self, filepath: str, pointcloud=None, coordinates="local"):
+        """Load OBJ vertices/edges, optionally converting world to local space."""
         if not os.path.exists(filepath):
             return
 
@@ -200,7 +297,7 @@ class RoofDrawingManager:
         vertex_map = {}  # 顶点坐标 -> 索引（防止重复）
         lines = []
 
-        with open(filepath, 'r') as f:
+        with open(filepath, 'r', encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith('#'):
@@ -223,15 +320,105 @@ class RoofDrawingManager:
                         "coord": (p1, p2)
                     })
 
-        # 填充到 manager
+        if coordinates == "world" and pointcloud is not None and vertices:
+            vertices = [
+                tuple(point) for point in pointcloud.to_local_coordinates(vertices)
+            ]
+            lines = [
+                {
+                    "name": line["name"],
+                    "coord": (
+                        tuple(pointcloud.to_local_coordinates(line["coord"][0])),
+                        tuple(pointcloud.to_local_coordinates(line["coord"][1])),
+                    ),
+                }
+                for line in lines
+            ]
+
         self.vertices = vertices
         self.vertex_info = [{"name": f"Vertex{i+1}", "coord": p} for i, p in enumerate(vertices)]
         self.lines = lines
-        self.closed = len(lines) > 0 and np.linalg.norm(np.array(lines[-1]["coord"][1]) - np.array(lines[0]["coord"][0])) < 0.5
-
         self.reset_temp_state()
+        self._update_closed_state()
         self.mode = "point"  # 或 "line"，根据你需要
         print(f"[RoofDrawing] 从 {filepath} 成功加载 {len(vertices)} 个顶点，{len(lines)} 条边")
+
+    def _update_closed_state(self) -> None:
+        self.closed = bool(
+            self.lines
+            and np.allclose(
+                self.lines[-1]["coord"][1], self.lines[0]["coord"][0], atol=1e-7
+            )
+        )
+
+    def invalidate_point_index(self) -> None:
+        self._point_tree = None
+        self._point_tree_source_id = None
+
+    def delete_vertex(self, index: int) -> Optional[int]:
+        if not 0 <= index < len(self.vertices):
+            return None
+        deleted_point = self.vertices.pop(index)
+        self.vertex_info.pop(index)
+        original_count = len(self.lines)
+        self.lines = [
+            line
+            for line in self.lines
+            if not (
+                np.allclose(line["coord"][0], deleted_point, atol=1e-6)
+                or np.allclose(line["coord"][1], deleted_point, atol=1e-6)
+            )
+        ]
+        self._renumber()
+        self._clear_selection()
+        self._update_closed_state()
+        return original_count - len(self.lines)
+
+    def delete_edge(self, index: int) -> bool:
+        if not 0 <= index < len(self.lines):
+            return False
+        del self.lines[index]
+        self._renumber()
+        self._clear_selection()
+        self._update_closed_state()
+        return True
+
+    def move_vertex(self, index: int, offset) -> Tuple[float, float, float]:
+        if not 0 <= index < len(self.vertices):
+            raise IndexError(index)
+        old_point = self.vertices[index]
+        new_point = tuple(np.asarray(old_point) + np.asarray(offset, dtype=float))
+        self.vertices[index] = new_point
+        self.vertex_info[index]["coord"] = new_point
+        for line in self.lines:
+            start, end = line["coord"]
+            if np.allclose(start, old_point, atol=1e-6):
+                start = new_point
+            if np.allclose(end, old_point, atol=1e-6):
+                end = new_point
+            line["coord"] = (start, end)
+        return new_point
+
+    def clear(self) -> None:
+        self.vertices.clear()
+        self.vertex_info.clear()
+        self.lines.clear()
+        self.reset_temp_state()
+        self._clear_selection()
+        self.invalidate_point_index()
+        self.mode = "point"
+
+    def _renumber(self) -> None:
+        for index, info in enumerate(self.vertex_info):
+            info["name"] = f"Vertex{index + 1}"
+        for index, line in enumerate(self.lines):
+            line["name"] = f"Edge{index + 1}"
+
+    def _clear_selection(self) -> None:
+        self.active_vertex_index = None
+        self.active_line_index = None
+        self.active_line_start_idx = None
+        self.active_line_end_idx = None
 
 
     def cancel_current_polygon(self):
