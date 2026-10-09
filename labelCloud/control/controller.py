@@ -363,6 +363,16 @@ class Controller:
 
     def key_press_event(self, a0: QtGui.QKeyEvent) -> None:
         """Triggers actions when the user presses a key."""
+        # Roof Plane 的方向键不能落入旧的切文件逻辑（切文件会触发保存）。
+        roof=self.roof_plane_controller
+        if roof.active and a0.key() in (Keys.Key_Left,Keys.Key_Right):
+            if roof.candidate is not None:
+                roof.adjust_edge_level(-1 if a0.key()==Keys.Key_Left else 1)
+            else:
+                self.view.status_manager.set_message("请先局部扩展，再用 ←/→ 调整边缘补选")
+            a0.accept()
+            return
+
         if a0.key() == Keys.Key_Escape:
             if self.roof_drawing_mode:
                 self.roof_drawing_manager.cancel_current_polygon()

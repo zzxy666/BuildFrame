@@ -83,6 +83,30 @@ STYLESHEET = """
         font-family: "DejaVu Sans", Arial;
     }}
 
+    /* 明确下拉列表高亮配色，避免全局白底与系统白色高亮文字冲突。 */
+    QComboBox QAbstractItemView {{
+        color: #202020;
+        background-color: #FFFFFF;
+        selection-color: #FFFFFF;
+        selection-background-color: #2468C4;
+    }}
+
+    QComboBox QAbstractItemView::item {{
+        color: #202020;
+        background-color: #FFFFFF;
+    }}
+
+    QComboBox QAbstractItemView::item:hover,
+    QComboBox QAbstractItemView::item:selected {{
+        color: #FFFFFF;
+        background-color: #2468C4;
+    }}
+
+    QComboBox QAbstractItemView::item:disabled {{
+        color: #808080;
+        background-color: #F2F2F2;
+    }}
+
     QMenu::item:selected {{
         background-color: #0000DD;
     }}
@@ -698,6 +722,9 @@ class GUI(QtWidgets.QMainWindow, _MAIN_WINDOW_UI):
 
     # Collect, filter and forward events to viewer
     def eventFilter(self, event_object, event) -> bool:
+        if event.type() == QEvent.Show and isinstance(event_object, QtWidgets.QComboBox):
+            from .dropdown_style import configure_dropdown
+            configure_dropdown(event_object)
         roof = self.controller.roof_plane_controller
         if event_object == self.gl_widget and roof.handle_mouse(event):
             return True

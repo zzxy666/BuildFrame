@@ -66,6 +66,45 @@ with patch.object(PointCloud,'create_buffers'), patch.object(PointCloud,'release
     assert len(roof.candidate)==224
     assert (roof.candidate<225).all()
     assert 0 not in roof.candidate  # 保护其他 Plane。
+    original_candidate=roof.candidate.copy()
+    strict=roof.strict_candidate.copy()
+    with patch.object(roof.spatial,'grow',side_effect=AssertionError('must use cached levels')):
+        for _ in range(3): QtTest.QTest.keyClick(view.gl_widget,QtCore.Qt.Key_Left)
+        assert roof.edge_level==0
+        np.testing.assert_array_equal(roof.candidate,strict)
+        for _ in range(10): QtTest.QTest.keyClick(view.gl_widget,QtCore.Qt.Key_Right)
+        assert roof.edge_level==10
+        assert np.isin(original_candidate,roof.candidate).all()
+        np.testing.assert_array_equal(roof.model.labels,labels)
+        assert len(roof.model.history)==history
+        for _ in range(7): QtTest.QTest.keyClick(view.gl_widget,QtCore.Qt.Key_Left)
+        assert roof.edge_level==3
+        np.testing.assert_array_equal(roof.candidate,original_candidate)
+    original=roof.candidate.copy()
+    changed=original[-5:]
+    view.gl_widget.modelview=np.eye(4);view.gl_widget.projection=np.eye(4)
+    roof.set_tool('rectangle')
+    def preview_drag(modifier, ids):
+        with patch.object(roof.projection_cache,'select',return_value=ids):
+            QtTest.QTest.mousePress(view.gl_widget,QtCore.Qt.LeftButton,modifier,QtCore.QPoint(10,10))
+            QtTest.QTest.mouseRelease(view.gl_widget,QtCore.Qt.LeftButton,modifier,QtCore.QPoint(100,100))
+            wait_task()
+    preview_drag(QtCore.Qt.AltModifier,changed)
+    assert not np.isin(changed,roof.candidate).any()
+    roof.adjust_edge_level(7)
+    assert not np.isin(changed,roof.candidate).any()
+    QtTest.QTest.keyClick(view.gl_widget,QtCore.Qt.Key_Z,QtCore.Qt.ControlModifier)
+    assert np.isin(changed,roof.candidate).all()
+    QtTest.QTest.keyClick(view.gl_widget,QtCore.Qt.Key_Y,QtCore.Qt.ControlModifier)
+    assert not np.isin(changed,roof.candidate).any()
+    preview_drag(QtCore.Qt.ShiftModifier,np.r_[changed,0])
+    assert np.isin(changed,roof.yellow_candidate).all()
+    assert 0 not in roof.candidate
+    np.testing.assert_array_equal(roof.model.labels,labels)
+    np.testing.assert_array_equal(roof.model.selection,seeds)
+    assert len(roof.model.history)==history
+    roof.adjust_edge_level(-7)
+    np.testing.assert_array_equal(roof.candidate,original)
     candidate=roof.candidate.copy()
     np.testing.assert_array_equal(roof.model.labels,labels)
     assert len(roof.model.history)==history
@@ -80,10 +119,13 @@ with patch.object(PointCloud,'create_buffers'), patch.object(PointCloud,'release
     np.testing.assert_array_equal(np.load(root/'roof.planar'/'plane_id.npy'),labels)
     QtTest.QTest.keyClick(view.gl_widget,QtCore.Qt.Key_Escape)
     assert roof.candidate is None
+    assert not any(shortcut.isEnabled() for shortcut in roof.panel.edge_level_shortcuts)
     np.testing.assert_array_equal(roof.model.selection,seeds)
     np.testing.assert_array_equal(roof.model.labels,labels)
+    roof.panel.robust_fit.setChecked(True)
     roof.expand_local()
     wait_task()
+    assert "RANSAC" in roof.panel.expansion_info.text()
     QtTest.QTest.keyClick(view.gl_widget,QtCore.Qt.Key_Return)
     assert roof.candidate is None
     assert np.all(roof.model.labels[candidate]==target)

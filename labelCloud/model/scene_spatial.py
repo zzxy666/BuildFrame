@@ -3,6 +3,7 @@ import logging
 import time
 import numpy as np
 from scipy.spatial import cKDTree
+from .local_plane_growth import ransac_seed_mask
 
 
 def coordinate_scale(header, units="auto"):
@@ -30,7 +31,7 @@ class SceneSpatialIndex:
             self.builds += 1
 
     def grow(self, labels, hidden, seeds, target, scale, options, roi=None,
-             hidden_revision=0, roi_revision=0, cancel=None, debug=False):
+             hidden_revision=0, roi_revision=0, cancel=None, debug=False, preview_levels=False):
         start = time.perf_counter()
         seeds = np.asarray(seeds, np.int64)
         if len(seeds) < 6: raise ValueError("至少选择 6 个相邻种子点")
@@ -43,6 +44,13 @@ class SceneSpatialIndex:
         scale = np.asarray(scale, float)
         if not np.isfinite(scale).all() or np.any(scale <= 0): raise ValueError("无效坐标单位")
         samples = self.points[seeds].astype(float)*scale
+        self.last_seed_total = len(seeds)
+        rejected = np.empty(0, np.int64)
+        if options.robust_fit:
+            inliers = ransac_seed_mask(samples, options, cancel)
+            rejected = seeds[~inliers]
+            seeds = seeds[inliers]; samples = samples[inliers]
+        self.last_seed_inliers = len(seeds)
         center = samples.mean(axis=0); delta = samples-center
         eig, axes = np.linalg.eigh(delta.T@delta/len(samples)); normal = axes[:, 0]
         if eig[1] <= 1e-10 or eig[1]/max(eig[2],1e-12)<.01 or eig[0]/eig[1]>.2:
@@ -64,6 +72,7 @@ class SceneSpatialIndex:
             self.normals.clear(); self.normal_key = key
         if len(self.normals)>100000: self.normals.clear()
         seen = set(map(int,seeds)); frontier = seeds
+        seen.update(map(int, rejected))
         result = [seeds[labels[seeds]==0]]
         radius = options.neighbor_radius/scale.min()
         query_seconds = normal_seconds = plane_seconds = 0.
@@ -123,22 +132,43 @@ class SceneSpatialIndex:
                 if len(ids): next_frontier.append(ids); result.append(ids)
             frontier=np.concatenate(next_frontier) if next_frontier else np.empty(0,np.int64)
         result=np.unique(np.concatenate(result))
+        self.last_strict = result.copy()
+        self.edge_levels = [np.empty(0, np.int64) for _ in range(11)]
+        self.edge_thresholds = [(0., 0.)]
         self.last_edge_count = 0
-        if options.edge_completion and len(result):
+        if (options.edge_completion or preview_levels) and len(result):
             # 只补一圈：法向在屋脊/檐口常混合，用严格区域的多点支撑替代法向条件。
-            # 补选点不能作为下一轮 frontier，距离阈值也不比主扩展宽松。
-            radius_m = min(options.edge_radius, options.neighbor_radius)
-            distance_m = min(options.edge_distance, options.plane_distance)
+            # 补选点不能作为下一轮 frontier；高档仅放宽固定主体周边的阈值。
+            factors = (1/3, 2/3, 1., 1.5, 2.) if preview_levels else (1.,)*5
+            self.edge_thresholds += [(min(options.edge_radius*f, options.neighbor_radius),
+                                      min(options.edge_distance*f, options.plane_distance)) for f in factors]
+            if preview_levels:
+                # 6～10 档放宽原封顶值，仍只依据固定主体补一圈。
+                radius5, distance5 = self.edge_thresholds[5]
+                self.edge_thresholds += [(radius5+(2*options.neighbor_radius-radius5)*step/5,
+                                          distance5+(2*options.plane_distance-distance5)*step/5)
+                                         for step in range(1,6)]
+            else:
+                self.edge_thresholds += [self.edge_thresholds[-1]]*5
+            radius_m, distance_m = self.edge_thresholds[-1]
             if radius_m <= 0 or distance_m <= 0:
                 raise ValueError("边缘补选阈值必须大于 0")
             strict = np.zeros(len(labels), bool)
             strict[result] = True; strict[seeds] = True
-            border = np.asarray(sorted(seen), np.int64)
+            border_ids = set(seen)
+            if preview_levels:
+                support = np.flatnonzero(strict)
+                for off in range(0,len(support),512):
+                    if cancel is not None and cancel.is_set(): raise InterruptedError("扩展已取消")
+                    groups = self.tree.query_ball_point(self.points[support[off:off+512]],radius_m/scale.min())
+                    for group in groups: border_ids.update(group)
+            border = np.asarray(sorted(border_ids), np.int64)
             allowed = ~strict[border] & ~hidden[border] & (labels[border] == 0)
+            if len(rejected): allowed &= ~np.isin(border, rejected)
             if roi is not None: allowed &= roi[border]
             border = border[allowed]
             border = border[np.abs((self.points[border].astype(float)*scale-center)@normal) <= distance_m]
-            added = []
+            added = []; support_distances = []; plane_distances = []
             for off in range(0, len(border), 512):
                 if cancel is not None and cancel.is_set(): raise InterruptedError("扩展已取消")
                 batch = border[off:off+512]
@@ -147,10 +177,21 @@ class SceneSpatialIndex:
                     ids = np.asarray(group, np.int64)
                     ids = ids[strict[ids]]
                     delta = (self.points[ids].astype(float)-self.points[point_id])*scale
-                    if np.count_nonzero(np.einsum('ij,ij->i',delta,delta) <= radius_m**2) >= 3:
-                        added.append(point_id)
-            self.last_edge_count = len(added)
-            if added: result = np.unique(np.concatenate((result,np.asarray(added,np.int64))))
+                    distances = np.einsum('ij,ij->i',delta,delta)
+                    if len(distances) >= 3:
+                        third = float(np.sqrt(np.partition(distances,2)[2]))
+                        if third <= radius_m:
+                            added.append(point_id); support_distances.append(third)
+                            plane_distances.append(abs((self.points[point_id].astype(float)*scale-center)@normal))
+            # 缓存各点到第三近支持点和种子平面的距离，调档不重建树或法向。
+            added = np.asarray(added,np.int64)
+            support_distances = np.asarray(support_distances)
+            plane_distances = np.asarray(plane_distances)
+            for level,(radius_limit,distance_limit) in enumerate(self.edge_thresholds[1:],1):
+                self.edge_levels[level] = added[(support_distances<=radius_limit)&(plane_distances<=distance_limit)]
+            selected = self.edge_levels[3] if options.edge_completion else self.edge_levels[0]
+            self.last_edge_count = len(selected)
+            if len(selected): result = np.unique(np.concatenate((result,selected)))
         if debug:
             logging.info("Growth selected=%d tree_builds=%d query_ms=%.1f plane_ms=%.1f normal_ms=%.1f total_ms=%.1f",
                          len(result),self.builds,query_seconds*1000,plane_seconds*1000,normal_seconds*1000,(time.perf_counter()-start)*1000)

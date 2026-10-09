@@ -64,10 +64,16 @@ class RoofPlanes:
         self.saved_revision = 0
         self.history = deque()
         self.history_bytes = 0
+        self.redo_history = deque()
+        self.redo_bytes = 0
         self.undo_discarded = 0
         self.changed_ids = np.empty(0, dtype=np.int64)
         self._plane_indices = {}
         self.session_metadata = {k: v for k, v in meta.items() if k not in ("source", "version")}
+        from .original_points import OriginalPointReader
+        self.point_reader=OriginalPointReader(self.path)
+        from .dual_gt import DualGTRegistry
+        self.dual_gt = DualGTRegistry(self)
 
     @property
     def source(self):
@@ -83,11 +89,15 @@ class RoofPlanes:
         self.revision += 1
 
     def _remember(self, kind, ids, values, added=(), removed=()):
+        # 新编辑开始新的分支，旧的重做记录不再有效。
+        self.redo_history.clear(); self.redo_bytes = 0
         ids = np.asarray(ids, dtype=np.int64)
         record = dict(kind=kind, ids=ids.copy(), values=np.asarray(values).copy(),
                       current=self.current, added=tuple(added), removed=tuple(removed))
+        if kind in ("labels", "rgb_gt"): record["dual_gt"] = self.dual_gt.state
         if kind == "hidden": record["selection"] = np.flatnonzero(self.selection)
-        record["bytes"] = sum(v.nbytes for v in record.values() if isinstance(v, np.ndarray)) + 256
+        if kind == "labels": record['plane_geometry']=dict(self.session_metadata.get('plane_geometry',{}))
+        record["bytes"] = self._record_bytes(record)
         self.history.append(record); self.history_bytes += record["bytes"]
         while self.history_bytes > self.UNDO_LIMIT and self.history:
             self.history_bytes -= self.history.popleft()["bytes"]
@@ -105,17 +115,33 @@ class RoofPlanes:
             pid = int(pid)
             self.plane_counts[pid] = self.plane_counts.get(pid, 0) + int(n)
             self._plane_indices.pop(pid, None)
+        geometry=dict(self.session_metadata.get('plane_geometry',{}))
+        affected=set(map(int,old))|set(map(int,new))
+        known=next((geometry[str(pid)] for pid in affected if str(pid) in geometry),None)
+        if known is not None:
+            for pid in affected-{0}:
+                if self.plane_counts.get(pid,0)==0: geometry.pop(str(pid),None)
+                else:
+                    previous=geometry.get(str(pid),known)
+                    geometry[str(pid)]=dict(plane_id=pid,point_count=self.plane_counts[pid],geometry_dirty=True,
+                        unit_to_m=previous.get('unit_to_m',[1.,1.,1.]),labels_revision=self.labels_revision+1)
+            self.session_metadata['plane_geometry']=geometry
+        self.dual_gt.labels_changed(affected)
         self.session.queue(ids, self.labels[ids])
         self.changed_ids = np.asarray(ids, dtype=np.int64)
         self.labels_revision += 1; self.table_revision += 1; self.touch()
 
     def new_plane(self):
-        if self.max_plane_id >= np.iinfo(np.uint32).max:
+        # 优先补最小空号；空 Plane 仍占用编号，不扫描整片点云。
+        pid = 1
+        while pid in self.plane_ids:
+            pid += 1
+        if pid > np.iinfo(np.uint32).max:
             raise ValueError("Plane ID 已超出 uint32 范围")
-        self.max_plane_id += 1
-        pid = self.max_plane_id
+        self.max_plane_id = max(self.max_plane_id, pid)
         self._remember("labels", [], np.empty(0, np.uint32), added=(pid,))
         self.current = pid; self.plane_ids.add(pid); self.plane_counts[pid] = 0
+        self.dual_gt.ensure(pid)
         self.table_revision += 1; self.touch()
         return pid
 
@@ -183,6 +209,7 @@ class RoofPlanes:
         self._remember("labels", ids, self.labels[ids], removed=removed)
         self._change(ids, 0)
         self.plane_ids.difference_update(removed); self.current = 0
+        if removed: self.dual_gt.archive(plane_id)
 
     def merge(self, source, target, allowed=None):
         if source == target or 0 in (source, target) or not {source, target} <= self.plane_ids:
@@ -193,10 +220,76 @@ class RoofPlanes:
         self._remember("labels", ids, self.labels[ids], removed=removed)
         self._change(ids, target)
         self.plane_ids.difference_update(removed); self.current = target
+        if len(ids) or removed: self.dual_gt.merge(source, target, bool(removed))
 
     def undo(self):
         if not self.history: return False
         record = self.history.pop(); self.history_bytes -= record["bytes"]
+        inverse = self._inverse_record(record)
+        self._apply_record(record)
+        self.redo_history.append(inverse); self.redo_bytes += inverse["bytes"]
+        self._trim_history()
+        return True
+
+    def redo(self):
+        if not self.redo_history: return False
+        record = self.redo_history.pop(); self.redo_bytes -= record["bytes"]
+        inverse = self._inverse_record(record)
+        self._apply_record(record)
+        self.history.append(inverse); self.history_bytes += inverse["bytes"]
+        self._trim_history()
+        return True
+
+    def _inverse_record(self, record):
+        # 只保存受影响点的相反变化；保留当前选区以准确恢复重做后的状态。
+        values = self.hidden_mask if record["kind"] == "hidden" else self.labels
+        inverse = dict(kind=record["kind"], ids=record["ids"],
+                       values=values[record["ids"]].copy(), current=self.current,
+                       added=record["removed"], removed=record["added"],
+                       selection=np.flatnonzero(self.selection))
+        if "rgb_annotations" in record:
+            inverse["rgb_annotations"]=self.session_metadata.get("rgb_annotations",[])
+        if 'plane_geometry' in record: inverse['plane_geometry']=dict(self.session_metadata.get('plane_geometry',{}))
+        if "dual_gt" in record: inverse["dual_gt"] = self.dual_gt.state
+        if 'rgb_draft' in record: inverse['rgb_draft']=record['rgb_draft']
+        inverse["bytes"] = self._record_bytes(inverse)
+        return inverse
+
+    @staticmethod
+    def _record_bytes(record):
+        import sys
+        # mask 不在 Undo 中；仍将元数据引用表计入内存上限，避免大量小编辑无限累积。
+        size=sum(v.nbytes for v in record.values() if isinstance(v,np.ndarray))+256
+        # 草稿只计候选索引和编辑历史，不复制整片点云；沿用全局撤销内存上限。
+        seen=set()
+        def draft_bytes(value):
+            if id(value) in seen: return 0
+            seen.add(id(value))
+            if isinstance(value,np.ndarray): return value.nbytes
+            if isinstance(value,dict): return sum(draft_bytes(v) for v in value.values())
+            if isinstance(value,(list,tuple)): return sum(draft_bytes(v) for v in value)
+            if value.__class__.__name__=='PreviewEdits': return draft_bytes(vars(value))
+            if value.__class__.__name__=='PreviewStateChange': return value.nbytes
+            return 0
+        size+=draft_bytes(record.get('rgb_draft',{}))
+        state=record.get('dual_gt',{})
+        for name in ('active','archived'):
+            values=state.get(name,{})
+            size+=sys.getsizeof(values)+sum(sys.getsizeof(v)+sys.getsizeof(v.get('fragments',[])) for v in values.values())
+        return size
+
+    def _trim_history(self):
+        while self.history_bytes+self.redo_bytes > self.UNDO_LIMIT:
+            if self.history:
+                self.history_bytes -= self.history.popleft()["bytes"]
+            elif self.redo_history:
+                self.redo_bytes -= self.redo_history.popleft()["bytes"]
+            else: break
+            self.undo_discarded += 1
+
+    def _apply_record(self, record):
+        if "rgb_annotations" in record:
+            self.session_metadata["rgb_annotations"]=record["rgb_annotations"]
         ids = record["ids"]
         self.selection[:] = False
         if record["kind"] == "hidden":
@@ -204,14 +297,46 @@ class RoofPlanes:
             self.hidden_mask[ids] = record["values"]
             self.selection[record["selection"]] = True
             self.hidden_revision += 1
+        elif record["kind"] == "rgb_gt":
+            self.touch()
         else:
             self._change(ids, record["values"])
             self.plane_ids.difference_update(record["added"])
             self.plane_ids.update(record["removed"])
             self.current = record["current"]
-            self.selection[ids] = True
+            self.selection[record.get("selection", ids)] = True
         self.selection[self.hidden_mask] = False
-        return True
+        if 'plane_geometry' in record: self.session_metadata['plane_geometry']=record['plane_geometry']
+        if 'dual_gt' in record: self.session_metadata['dual_gt']=record['dual_gt']
+
+    def attach_plane_geometry(self,geometry):
+        values=dict(self.session_metadata.get('plane_geometry',{}))
+        values[str(geometry['plane_id'])]=dict(geometry)
+        self.session_metadata['plane_geometry']=values
+
+    def geometry_jobs(self,metadata):
+        return [(key,self.plane_indices(int(key)).copy(),dict(value)) for key,value in
+                metadata.get('plane_geometry',{}).items() if value.get('geometry_dirty')]
+
+    def fit_geometry_jobs(self,metadata,jobs):
+        from .geometry_refiner import plane_geometry
+        values=dict(metadata.get('plane_geometry',{}))
+        for key,ids,previous in jobs:
+            if not len(ids): values.pop(key,None);continue
+            try:
+                value=plane_geometry(self.point_reader.read(ids),previous['unit_to_m'],int(key))
+                if value['p95_m']>.15: value['warning']='合并或修改后的点可能不是单一平面'
+            except ValueError as exc:
+                value=dict(plane_id=int(key),point_count=len(ids),geometry_dirty=False,fit_failed=str(exc),unit_to_m=previous['unit_to_m'])
+            values[key]=value
+        if jobs: metadata['plane_geometry']=values
+
+    def attach_rgb_annotation(self, annotation):
+        # 与本次点标签差分共用一次 Undo；Polygon 是辅助历史，不是第二套 GT。
+        if not self.history: return
+        previous=self.session_metadata.get("rgb_annotations",[])
+        self.history[-1]["rgb_annotations"]=previous
+        self.session_metadata["rgb_annotations"]=previous+[annotation]
 
     def colors(self, ids=None):
         from .roof_planes import plane_color
@@ -223,6 +348,7 @@ class RoofPlanes:
         return [(pid, self.plane_counts.get(pid, 0)) for pid in sorted(self.plane_ids)]
 
     def save(self):
+        self.fit_geometry_jobs(self.session_metadata,self.geometry_jobs(self.session_metadata))
         self.session_metadata.update(max_plane_id=self.max_plane_id, current_plane=self.current,
                                      empty_planes=[pid for pid in self.plane_ids if not self.plane_counts.get(pid)])
         self.session.save(self.labels, self.session_metadata)
@@ -230,4 +356,5 @@ class RoofPlanes:
         return self.session.folder / "plane_id.npy"
 
     def export(self, destination=None, cancel=None):
+        if self.geometry_jobs(self.session_metadata): self.save()
         return self.session.export(self.labels, destination or self.output_path, cancel)

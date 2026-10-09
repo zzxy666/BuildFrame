@@ -39,6 +39,24 @@ class ScreenProjectionCache:
         self.screen, self.depth, self.valid, self.key = screen, depth, valid, key
         self.builds += 1
 
+    def pick(self, point, hidden, radius=6, cancel=None):
+        """按屏幕距离拾取可见原始索引；同一像素优先前景，不穿透查询标签。"""
+        best = None; best_key = None
+        for first in range(0, len(hidden), self.CHUNK):
+            if cancel is not None and cancel.is_set(): raise InterruptedError("查询已取消")
+            last = min(first+self.CHUNK, len(hidden))
+            delta = self.screen[first:last]-np.asarray(point)
+            distance = np.einsum('ij,ij->i', delta, delta)
+            ids = np.flatnonzero(self.valid[first:last] & ~hidden[first:last] & (distance <= radius**2))
+            if not len(ids): continue
+            # 将距离按像素分组，避免重叠点因亚像素误差优先选中背面。
+            pixel_distance = np.floor(np.sqrt(distance[ids]))
+            order = np.lexsort((ids, distance[ids], self.depth[first+ids], pixel_distance))
+            local = ids[order[0]]; index = first+int(local)
+            key = (pixel_distance[order[0]], self.depth[index], distance[local], index)
+            if best_key is None or key < best_key: best, best_key = index, key
+        return best
+
     def select(self, polygon, labels, hidden, scope, current, roi=None, cancel=None, debug=False):
         start = time.perf_counter()
         polygon = np.asarray(polygon, float)
