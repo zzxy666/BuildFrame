@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy.spatial import cKDTree
+from .plane_math import least_squares_plane
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,43 @@ class GrowthOptions:
     edge_completion: bool = False
     edge_radius: float = 0.25
     edge_distance: float = 0.08
+    robust_fit: bool = False
+    ransac_distance: float = 0.08
+    ransac_iterations: int = 300
+    ransac_min_ratio: float = 0.6
+
+
+def ransac_seed_mask(samples, options, cancel=None, *, minimum=6, random_seed=0, require_majority=True):
+    """三点采样找主要平面，再用 PCA 精拟合；仅筛选种子，不修改标签。"""
+    threshold = min(options.ransac_distance, options.plane_distance)
+    if not np.isfinite(threshold) or threshold <= 0 or options.ransac_iterations < 1:
+        raise ValueError("无效 RANSAC 距离或迭代次数")
+    if not (0.5 if require_majority else 0) < options.ransac_min_ratio <= 1:
+        raise ValueError("RANSAC 最低内点比例必须大于 50% 且不超过 100%")
+    required = max(minimum, int(np.ceil(len(samples)*options.ransac_min_ratio)))
+    rng = np.random.default_rng(random_seed)  # 同样输入得到可复现的预览。
+    best = np.zeros(len(samples), bool); best_error = np.inf
+    for _ in range(options.ransac_iterations):
+        if cancel is not None and cancel.is_set(): raise InterruptedError("拟合已取消")
+        a, b, c = samples[rng.choice(len(samples), 3, replace=False)]
+        normal = np.cross(b-a, c-a); length = np.linalg.norm(normal)
+        if length < 1e-10: continue
+        residual = np.abs((samples-a)@(normal/length))
+        mask = residual <= threshold
+        count = int(mask.sum()); error = float(residual[mask].mean())
+        if count > best.sum() or (count == best.sum() and error < best_error):
+            best, best_error = mask, error
+    if best.sum() < required:
+        raise ValueError("RANSAC 种子支持不足，请重新选择同一屋面的种子")
+    # 单调剔除不满足精拟合平面的点，避免把离群种子重新加入。
+    for _ in range(10):
+        normal, center = least_squares_plane(samples[best])
+        refined = best & (np.abs((samples-center)@normal) <= threshold)
+        if refined.sum() < required:
+            raise ValueError("RANSAC 精拟合后种子支持不足")
+        if np.array_equal(refined, best): return best
+        best = refined
+    raise ValueError("RANSAC 拟合未稳定，请重新选择种子")
 
 
 def metric_coordinates(las, units="auto"):

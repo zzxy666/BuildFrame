@@ -12,14 +12,14 @@ from labelCloud.model.local_plane_growth import GrowthOptions
 from labelCloud.model.scene_workspace import SceneWorkspace
 
 
-def test_high_water_id_counts_undo_and_sidecar(tmp_path):
+def test_existing_id_counts_undo_and_sidecar(tmp_path):
     path=tmp_path/'roof.las'; source_file(path)
     model=RoofPlanes(path)
     model.selection[:4]=True; model.assign(1000000)
     assert model.labels.dtype==np.uint32
-    assert model.new_plane()==1000001
+    assert model.new_plane()==1
     model.undo()
-    assert model.new_plane()==1000002
+    assert model.new_plane()==1
     model.delete(1000000)
     assert model.plane_counts[0]==12
     model.undo()
@@ -30,7 +30,7 @@ def test_high_water_id_counts_undo_and_sidecar(tmp_path):
     assert not model.dirty
     reloaded=RoofPlanes(path)
     np.testing.assert_array_equal(reloaded.labels,model.labels)
-    assert reloaded.new_plane()==1000003
+    assert reloaded.new_plane()==2
     assert path.read_bytes()==original
     # 选区刷新读取缓存统计，不对全部点调用 unique。
     with patch('numpy.unique',side_effect=AssertionError('full scan')):
@@ -45,7 +45,7 @@ def test_chunk_export_preserves_every_field_and_evlr(tmp_path,suffix):
     source.write(path)
     model=RoofPlanes(path)
     model.selection[[1,5,7]]=True; model.assign(4294967295)
-    with pytest.raises(ValueError): model.new_plane()
+    assert model.new_plane() == 1
     model.set_hidden(np.ones(12,bool))
     destination=model.export(tmp_path/('export'+suffix))
     saved=laspy.read(destination,laz_backend=laspy.LazBackend.Laszip)
@@ -138,3 +138,50 @@ def test_workspace_grid_bookmarks_and_memory_bound(tmp_path):
     model.UNDO_LIMIT=800
     for i in range(20): model.new_plane()
     assert model.history_bytes<=800
+
+
+def test_deleted_highest_id_reused_after_reload_and_undo(tmp_path):
+    path = tmp_path / 'roof.las'; source_file(path)
+    model = RoofPlanes(path)
+    for pid in range(1, 9):
+        assert model.new_plane() == pid
+    model.selection[:4] = True; model.assign(8)
+    model.delete(8)
+    model.save()
+    reloaded = RoofPlanes(path)
+    assert reloaded.new_plane() == 8
+    assert model.new_plane() == 8
+    model.selection[4:8] = True; model.assign(8)
+    model.undo(); model.undo(); model.undo()
+    assert np.all(model.labels[:4] == 8)
+    assert not model.labels[4:].any()
+    assert model.new_plane() == 9
+    model.delete(8)
+    assert model.new_plane() == 8
+
+
+def test_deleted_uint32_max_does_not_block_new_plane(tmp_path):
+    path = tmp_path / 'roof.las'; source_file(path)
+    model = RoofPlanes(path)
+    model.selection[:2] = True; model.assign(int(np.iinfo(np.uint32).max))
+    model.delete(model.current)
+    assert model.new_plane() == 1
+
+
+def test_middle_gap_reuse_and_undo_after_reload(tmp_path):
+    path=tmp_path/'roof.las'; source_file(path)
+    model=RoofPlanes(path)
+    for pid in range(1,72): assert model.new_plane()==pid
+    model.selection[:4]=True; model.assign(69)
+    model.delete(69); model.save()
+    reloaded=RoofPlanes(path)
+    assert reloaded.new_plane()==69
+    assert model.new_plane()==69
+    model.selection[4:8]=True; model.assign(69)
+    model.undo(); model.undo(); model.undo()
+    assert np.all(model.labels[:4]==69)
+    assert not model.labels[4:].any()
+    assert model.new_plane()==72
+    model.delete(20); model.delete(69)
+    assert model.new_plane()==20
+    assert model.new_plane()==69

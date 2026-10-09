@@ -116,9 +116,9 @@ with patch.object(PointCloud, 'create_buffers'), patch.object(PointCloud, 'relea
     assert not roof.model.labels.any()
     assert roof.model.selection.sum() == 2
     QtTest.QTest.keyClick(roof.panel.list, QtCore.Qt.Key_N)
-    assert roof.model.current == 4
+    assert roof.model.current == 1
     roof.assign()
-    assert (roof.model.labels == 4).sum() == 2
+    assert (roof.model.labels == 1).sum() == 2
     # 套索选右半边。
     roof.panel.tool.setCurrentIndex(2)
     roof.gesture = [(width*.6,height*.1),(width*.9,height*.1),
@@ -129,13 +129,13 @@ with patch.object(PointCloud, 'create_buffers'), patch.object(PointCloud, 'relea
     assert roof.model.selection.sum() == 2
     roof.assign(2)
     roof.panel.selection_scope.setCurrentIndex(2)  # 主动进入纠错范围，允许合并/删除。
-    with patch.object(QtWidgets.QInputDialog, 'getText', return_value=('4', True)):
+    with patch.object(QtWidgets.QInputDialog, 'getText', return_value=('1', True)):
         roof.merge()
-    assert np.all(roof.model.labels == 4)
+    assert np.all(roof.model.labels == 1)
     roof.delete()
     assert not roof.model.labels.any()
     roof.undo()
-    assert np.all(roof.model.labels == 4)
+    assert np.all(roof.model.labels == 1)
     QtTest.QTest.keyClick(roof.panel.list, QtCore.Qt.Key_Escape)
     assert not roof.model.selection.any()
     assert roof.highlight is None
@@ -147,7 +147,7 @@ with patch.object(PointCloud, 'create_buffers'), patch.object(PointCloud, 'relea
     assert view.button_add_vertices.isEnabled()
     assert len(owner.roof_drawing_manager.vertices) == 1
     roof.mode.setCurrentIndex(1)
-    assert np.all(roof.model.labels == 4)
+    assert np.all(roof.model.labels == 1)
     # 保存失败不得跳到下一文件。
     with patch.object(roof.model, 'save', side_effect=OSError('test disk full')):
         owner.next_pcd()
@@ -158,7 +158,7 @@ with patch.object(PointCloud, 'create_buffers'), patch.object(PointCloud, 'relea
     assert owner.pcd_manager.current_id == 1
     assert (root/'a.planar'/'plane_id.npy').exists()
     owner.prev_pcd()
-    assert np.all(roof.model.labels == 4)
+    assert np.all(roof.model.labels == 1)
     assert len(owner.roof_drawing_manager.vertices) == 1
     # 输出 GT 不进入下一轮原始文件队列。
     owner.pcd_manager.read_pointcloud_folder()

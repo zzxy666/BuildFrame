@@ -77,32 +77,52 @@ class SceneSession:
         if len(ids):
             self.pending.append((np.asarray(ids, dtype=np.int64).copy(), np.asarray(values, dtype=np.uint32).copy()))
 
+    def snapshot(self, labels, metadata):
+        import copy
+        count = len(self.pending)
+        full = labels.copy() if self.map is None else None
+        ids = (np.unique(np.concatenate([item[0] for item in self.pending]))
+               if self.pending and full is None else np.empty(0,np.int64))
+        return (full, ids, labels[ids].copy(), copy.deepcopy(metadata), count)
+
     def save(self, labels, metadata):
+        snapshot = self.snapshot(labels,metadata)
+        self.write_snapshot(snapshot)
+        del self.pending[:snapshot[4]]
+
+    def write_snapshot(self, snapshot):
+        # 工作线程只读取独立快照；新增 pending 由界面线程保留。
+        full, ids, values, metadata, _ = snapshot
         self.verify_source()
         self.folder.mkdir(parents=True, exist_ok=True)
         labels_path = self.folder / "plane_id.npy"
-        if self.map is None:
+        if full is not None:
             temporary = self.folder / "plane_id.initial.npy"
-            arr = np.lib.format.open_memmap(temporary, mode="w+", dtype=np.uint32, shape=labels.shape)
-            for start in range(0, len(labels), 250000):
-                arr[start:start+250000] = labels[start:start+250000]
+            arr = np.lib.format.open_memmap(temporary, mode="w+", dtype=np.uint32, shape=full.shape)
+            for start in range(0, len(full), 250000):
+                arr[start:start+250000] = full[start:start+250000]
             arr.flush(); del arr
             os.replace(temporary, labels_path)
             self.map = np.load(labels_path, mmap_mode="r+", allow_pickle=False)
-        elif self.pending:
+        elif len(ids):
             # 先落盘重做日志，再更新 memmap，崩溃后重复应用仍然安全。
-            ids = np.unique(np.concatenate([item[0] for item in self.pending]))
             temporary = self.folder / "pending.tmp.npz"
             with temporary.open("wb") as stream:
-                np.savez(stream, ids=ids, values=labels[ids])
+                np.savez(stream, ids=ids, values=values)
                 stream.flush(); os.fsync(stream.fileno())
             os.replace(temporary, self.folder / "pending.npz")
-            self.map[ids] = labels[ids]
+            self.map[ids] = values
             self.map.flush()
         metadata = dict(metadata, source=self.fingerprint, version=1)
         atomic_json(self.folder / "session.json", metadata)
+        if "rgb_annotations" in metadata:
+            atomic_json(self.folder / "rgb_annotations.json",
+                        {"source":self.fingerprint,"annotations":metadata["rgb_annotations"]})
+        if 'plane_geometry' in metadata:
+            atomic_json(self.folder/'plane_geometry.json',{'source':self.fingerprint,'planes':metadata['plane_geometry']})
+        if "dual_gt" in metadata:
+            atomic_json(self.folder / "dual_gt.json", metadata["dual_gt"])
         self.metadata = metadata
-        self.pending.clear()
         (self.folder / "pending.npz").unlink(missing_ok=True)
 
     def export(self, labels, destination, cancel=None):

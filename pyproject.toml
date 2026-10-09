@@ -26,6 +26,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+rgb = ["rasterio>=1.3", "pyproj>=3.4"]
+sam = [
+  "rasterio>=1.3", "pyproj>=3.4",
+  "torch>=2.5.1; python_version >= '3.10'",
+  "torchvision>=0.20.1; python_version >= '3.10'",
+  "SAM-2 @ git+https://github.com/facebookresearch/sam2.git ; python_version >= '3.10'",
+]
 dev = [
   "pytest>=7.4",
 ]

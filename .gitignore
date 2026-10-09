@@ -9,6 +9,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 run.log
+.labelCloud.log
 *.roof.json
 
 # 虚拟环境
